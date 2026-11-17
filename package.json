@@ -1,0 +1,12 @@
+{
+  "name": "boris-ui",
+  "version": "0.1.0",
+  "description": "Boris chatbot UI",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
+  }
+}

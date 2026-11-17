@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Boris</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="chat-header">
+      <div class="avatar">B</div>
+      <div class="header-info">
+        <h1>Boris</h1>
+        <span class="status">En linea</span>
+      </div>
+    </header>
+
+    <main class="chat-messages" id="messages">
+      <div class="message bot">
+        <div class="bubble">Hola, soy Boris. En que puedo ayudarte?</div>
+      </div>
+    </main>
+
+    <footer class="chat-input">
+      <textarea id="input" rows="1" placeholder="Escribe un mensaje..." aria-label="Escribe un mensaje"></textarea>
+      <button id="send" type="button" aria-label="Enviar mensaje">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 2 11 13" />
+          <path d="M22 2 15 22 11 13 2 9z" />
+        </svg>
+      </button>
+    </footer>
+  </div>
+
+  <script src="chat.js"></script>
+</body>
+</html>
