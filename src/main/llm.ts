@@ -26,6 +26,7 @@ export interface SSEError {
 export interface SSEChoice {
   delta: {
     content?: string;
+    reasoning_content?: string;
   };
 }
 
@@ -43,6 +44,7 @@ export interface ToolCall {
 
 export interface StreamHandlers {
   onChunk: (content: string) => void;
+  onReasoning: (content: string) => void;
   onDone: () => void;
   onError: (message: string) => void;
 }
@@ -88,7 +90,7 @@ function sendToRenderer(event: IpcMainInvokeEvent, channel: string, requestId: s
   }
 }
 
-function parseSseLine(line: string): { type: "done" | "error" | "content"; content?: string; message?: string } | null {
+function parseSseLine(line: string): { type: "done" | "error" | "content" | "reasoning"; content?: string; message?: string } | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith("data:")) return null;
 
@@ -105,8 +107,14 @@ function parseSseLine(line: string): { type: "done" | "error" | "content"; conte
     }
 
     const choice = parsed.choices && parsed.choices[0];
-    const content = choice && choice.delta && choice.delta.content;
+    if (!choice || !choice.delta) return null;
 
+    const reasoning = choice.delta.reasoning_content;
+    if (reasoning) {
+      return { type: "reasoning", content: reasoning };
+    }
+
+    const content = choice.delta.content;
     if (content) {
       return { type: "content", content };
     }
@@ -135,6 +143,27 @@ function collectToolCalls(rawBuffer: string): ToolCall[] {
 
 function extractCleanText(rawBuffer: string): string {
   return rawBuffer.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
+}
+
+const THINKING_TAG_REGEX = /<\/?thinking\s*\/?>|<\/?reasoning\s*\/?>/gi;
+
+function extractReasoningFromTags(rawBuffer: string): { reasoning: string; content: string } {
+  const thinkingRegex = /<thinking>([\s\S]*?)<\/thinking>([\s\S]*)/i;
+  const match = thinkingRegex.exec(rawBuffer);
+  if (match) {
+    const reasoning = match[1].replace(/<\/?thinking\s*\/?>/gi, "").trim();
+    const content = match[2].replace(THINKING_TAG_REGEX, "").trim();
+    return { reasoning, content };
+  }
+
+  const reasoningOnlyRegex = /<thinking>([\s\S]*?)<\/thinking>/i;
+  const reasoningMatch = reasoningOnlyRegex.exec(rawBuffer);
+  if (reasoningMatch) {
+    const reasoning = reasoningMatch[1].replace(/<\/?thinking\s*\/?>/gi, "").trim();
+    return { reasoning, content: "" };
+  }
+
+  return { reasoning: "", content: rawBuffer };
 }
 
 async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayload): Promise<void> {
@@ -174,9 +203,11 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       const decoder = new TextDecoder();
       let buffer = "";
       let rawBuffer = "";
+      let reasoningBuffer = "";
       let finished = false;
       let displayOffset = 0;
       let pendingCalls: ToolCall[] = [];
+      let hasReasoning = false;
 
       while (!finished) {
         const { done, value } = await reader.read();
@@ -196,17 +227,34 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             finished = true;
           } else if (result.type === "error") {
             throw new Error(result.message!);
+          } else if (result.type === "reasoning") {
+            hasReasoning = true;
+            reasoningBuffer += result.content!;
+            sendToRenderer(event, "boris:chat:reasoning", requestId, { content: result.content! });
           } else if (result.type === "content") {
             rawBuffer += result.content!;
-            const cleanText = extractCleanText(rawBuffer.slice(displayOffset));
-            displayOffset = rawBuffer.length - cleanText.length;
 
-            if (cleanText) {
-              sendToRenderer(event, "boris:chat:chunk", requestId, { content: cleanText });
+            if (hasReasoning) {
+              const extracted = extractReasoningFromTags(rawBuffer);
+              if (extracted.reasoning) {
+                reasoningBuffer += extracted.reasoning;
+                sendToRenderer(event, "boris:chat:reasoning", requestId, { content: extracted.reasoning });
+              }
+              const cleanContent = extracted.content.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
+              if (cleanContent) {
+                sendToRenderer(event, "boris:chat:chunk", requestId, { content: cleanContent });
+              }
+            } else {
+              const cleanText = extractCleanText(rawBuffer.slice(displayOffset));
+              displayOffset = rawBuffer.length - cleanText.length;
+
+              if (cleanText) {
+                sendToRenderer(event, "boris:chat:chunk", requestId, { content: cleanText });
+              }
+
+              const newCalls = collectToolCalls(rawBuffer.slice(displayOffset));
+              pendingCalls.push(...newCalls);
             }
-
-            const newCalls = collectToolCalls(rawBuffer.slice(displayOffset));
-            pendingCalls.push(...newCalls);
           }
         }
       }

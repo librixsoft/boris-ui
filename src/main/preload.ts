@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 
 interface ChatHandlers {
   onChunk: (content: string) => void;
+  onReasoning: (content: string) => void;
   onDone: () => void;
   onError: (message: string) => void;
 }
@@ -14,6 +15,12 @@ function attachListeners(requestId: string, handlers: ChatHandlers): AttachListe
   const onChunk = (_event: IpcRendererEvent, data: { requestId: string; content: string }): void => {
     if (data.requestId === requestId) {
       handlers.onChunk(data.content);
+    }
+  };
+
+  const onReasoning = (_event: IpcRendererEvent, data: { requestId: string; content: string }): void => {
+    if (data.requestId === requestId) {
+      handlers.onReasoning(data.content);
     }
   };
 
@@ -31,11 +38,13 @@ function attachListeners(requestId: string, handlers: ChatHandlers): AttachListe
 
   function detach(): void {
     ipcRenderer.off("boris:chat:chunk", onChunk);
+    ipcRenderer.off("boris:chat:reasoning", onReasoning);
     ipcRenderer.off("boris:chat:done", onDone);
     ipcRenderer.off("boris:chat:error", onError);
   }
 
   ipcRenderer.on("boris:chat:chunk", onChunk);
+  ipcRenderer.on("boris:chat:reasoning", onReasoning);
   ipcRenderer.on("boris:chat:done", onDone);
   ipcRenderer.on("boris:chat:error", onError);
 
