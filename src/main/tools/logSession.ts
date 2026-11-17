@@ -5,8 +5,10 @@ import { Tool } from "./registry";
 const LOGS_ROOT = path.join(process.env.HOME || "/Users/lastprophet", ".boris", "logs");
 
 interface LogEntry {
-  type: string;
+  type: string; // "tool" | "conversation" | "reasoning" | "error"
   name?: string;
+  role?: "user" | "assistant";
+  content?: string;
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   duration?: number;
@@ -78,6 +80,34 @@ function formatToolCallEntry(entry: LogEntry): string {
     `- Output: ${outputStr}`,
     `- Duracion: ${durationStr}`,
     `- Estado: ${entry.status || "unknown"}`,
+    ""
+  ].join("\n");
+}
+
+function formatConversationEntry(entry: LogEntry): string {
+  const roleLabel = entry.role === "user" ? "Usuario" : "Asistente";
+  const content = entry.content || "";
+  return [
+    `### ${roleLabel}`,
+    content,
+    ""
+  ].join("\n");
+}
+
+function formatReasoningEntry(entry: LogEntry): string {
+  const content = entry.content || "";
+  return [
+    "### Razonamiento",
+    content,
+    ""
+  ].join("\n");
+}
+
+function formatErrorEntry(entry: LogEntry): string {
+  const message = entry.content || entry.input?.["message"] || "Error desconocido";
+  return [
+    "### Error",
+    `- ${message}`,
     ""
   ].join("\n");
 }
@@ -158,13 +188,28 @@ function appendEntry(sessionId: string, entry: LogEntry): { success: boolean } {
     return { success: false };
   }
 
-  const block = formatToolCallEntry(entry);
-  writeLogFile(sessionId, block);
-
-  currentSession.toolCalls++;
-  if (entry.status === "error") {
-    currentSession.errors++;
+  let block: string;
+  switch (entry.type) {
+    case "conversation":
+      block = formatConversationEntry(entry);
+      break;
+    case "reasoning":
+      block = formatReasoningEntry(entry);
+      break;
+    case "error":
+      block = formatErrorEntry(entry);
+      currentSession.errors++;
+      break;
+    default:
+      block = formatToolCallEntry(entry);
+      currentSession.toolCalls++;
+      if (entry.status === "error") {
+        currentSession.errors++;
+      }
+      break;
   }
+
+  writeLogFile(sessionId, block);
 
   updateIndex(sessionId, {
     tool_calls: currentSession.toolCalls,
@@ -245,6 +290,8 @@ const tool: Tool = {
         const logEntry: LogEntry = {
           type: entry.type as string || "Tool Call",
           name: entry.name as string || "unknown",
+          role: entry.role as "user" | "assistant" | undefined,
+          content: entry.content as string | undefined,
           input: entry.input as Record<string, unknown>,
           output: entry.output as Record<string, unknown>,
           duration: entry.duration as number,
