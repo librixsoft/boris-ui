@@ -1,9 +1,9 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
-const path = require("path");
-const { registerLlmIpc } = require("./llm");
-const { registerToolsIpc } = require("./tools/handler");
+import { app, BrowserWindow, ipcMain } from "electron";
+import * as path from "path";
+import { registerLlmIpc } from "./llm";
+import { registerToolsIpc } from "./tools/handler";
 
-function createWindow() {
+function createWindow(): void {
   const win = new BrowserWindow({
     width: 960,
     height: 720,

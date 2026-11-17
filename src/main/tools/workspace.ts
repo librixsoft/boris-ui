@@ -1,8 +1,8 @@
-const path = require("path");
+import * as path from "path";
 
-const WORKSPACE_ROOT = path.join(__dirname, "..", "..", "..", "workspace");
+export const WORKSPACE_ROOT = path.join(__dirname, "..", "..", "..", "workspace");
 
-function resolveSafePath(userPath) {
+export function resolveSafePath(userPath: string): string {
   if (path.isAbsolute(userPath)) {
     throw new Error(`Ruta absoluta no permitida: ${userPath}`);
   }
@@ -22,5 +22,3 @@ function resolveSafePath(userPath) {
 
   return resolved;
 }
-
-module.exports = { WORKSPACE_ROOT, resolveSafePath };

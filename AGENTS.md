@@ -1,1 +1,2 @@
+- Usa TypeScript para este proyecto
 - Usar metodologia D.R.Y.

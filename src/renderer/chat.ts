@@ -1,17 +1,55 @@
-const messagesEl = document.getElementById("messages");
-const inputEl = document.getElementById("input");
-const sendEl = document.getElementById("send");
+interface MessagesElement extends HTMLElement {
+  scrollTop: number;
+  scrollHeight: number;
+}
 
-const chatHistory = [];
-let activeStream = null;
-let streamTimer = null;
-let messageQueue = [];
+interface InputElement extends HTMLTextAreaElement {
+  scrollHeight: number;
+}
 
-function scrollToBottom() {
+interface SendElement extends HTMLButtonElement {
+  title: string;
+}
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+interface ChatStreamResult {
+  stop(): void;
+}
+
+interface WindowBorisChat {
+  stream(messages: ChatMessage[], handlers: {
+    onChunk: (content: string) => void;
+    onDone: () => void;
+    onError: (message: string) => void;
+  }): ChatStreamResult;
+}
+
+interface WindowBoris {
+  chat: WindowBorisChat;
+}
+
+interface Window {
+  boris: WindowBoris;
+}
+
+const messagesEl = document.getElementById("messages") as MessagesElement;
+const inputEl = document.getElementById("input") as InputElement;
+const sendEl = document.getElementById("send") as SendElement;
+
+const chatHistory: ChatMessage[] = [];
+let activeStream: ChatStreamResult | null = null;
+let streamTimer: NodeJS.Timeout | null = null;
+let messageQueue: string[] = [];
+
+function scrollToBottom(): void {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function appendMessage(role, text) {
+function appendMessage(role: string, text: string): HTMLDivElement {
   const wrapper = document.createElement("div");
   wrapper.className = `message ${role}`;
 
@@ -25,7 +63,7 @@ function appendMessage(role, text) {
   return bubble;
 }
 
-function appendTyping() {
+function appendTyping(): HTMLDivElement {
   const wrapper = document.createElement("div");
   wrapper.className = "message bot typing-indicator";
 
@@ -39,23 +77,23 @@ function appendTyping() {
   wrapper.appendChild(indicator);
   messagesEl.appendChild(wrapper);
   scrollToBottom();
-  return wrapper;
+  return indicator as unknown as HTMLDivElement;
 }
 
-function removeTyping(indicator) {
+function removeTyping(indicator: HTMLDivElement): void {
   indicator.remove();
 }
 
-function autoResize() {
+function autoResize(): void {
   inputEl.style.height = "auto";
   inputEl.style.height = `${Math.min(inputEl.scrollHeight, 120)}px`;
 }
 
-function setSending(isSending) {
+function setSending(isSending: boolean): void {
   sendEl.disabled = isSending;
 }
 
-function appendQueuedMessage(text) {
+function appendQueuedMessage(text: string): void {
   const wrapper = document.createElement("div");
   wrapper.className = "message user queued";
 
@@ -68,7 +106,7 @@ function appendQueuedMessage(text) {
   scrollToBottom();
 }
 
-function updateQueueBadge() {
+function updateQueueBadge(): void {
   if (messageQueue.length > 0) {
     sendEl.title = `${messageQueue.length} mensaje(s) en cola`;
   } else {
@@ -76,7 +114,7 @@ function updateQueueBadge() {
   }
 }
 
-function processQueue() {
+function processQueue(): void {
   if (activeStream) return;
   if (messageQueue.length === 0) {
     setSending(false);
@@ -85,8 +123,8 @@ function processQueue() {
   }
   const next = messageQueue.shift();
   updateQueueBadge();
-  appendMessage("user", next);
-  chatHistory.push({ role: "user", content: next });
+  appendMessage("user", next!);
+  chatHistory.push({ role: "user", content: next! });
   inputEl.value = "";
   autoResize();
   inputEl.focus();
@@ -94,7 +132,7 @@ function processQueue() {
   streamResponse();
 }
 
-function clearQueue() {
+function clearQueue(): void {
   messageQueue = [];
   const queuedMessages = document.querySelectorAll(".message.user.queued");
   queuedMessages.forEach(el => el.remove());
@@ -104,9 +142,9 @@ function clearQueue() {
   }
 }
 
-function streamResponse() {
+function streamResponse(): void {
   const indicator = appendTyping();
-  let streamingBubble = null;
+  let streamingBubble: HTMLDivElement | null = null;
   let content = "";
 
   if (streamTimer) {
@@ -127,7 +165,7 @@ function streamResponse() {
   }, 30000);
 
   activeStream = window.boris.chat.stream(chatHistory, {
-    onChunk(chunk) {
+    onChunk(chunk: string) {
       content += chunk;
       if (!streamingBubble) {
         removeTyping(indicator);
@@ -138,8 +176,10 @@ function streamResponse() {
       }
     },
     onDone() {
-      clearTimeout(streamTimer);
-      streamTimer = null;
+      if (streamTimer) {
+        clearTimeout(streamTimer);
+        streamTimer = null;
+      }
       if (!streamingBubble) {
         removeTyping(indicator);
         streamingBubble = appendMessage("bot", "Sin respuesta del modelo.");
@@ -148,9 +188,11 @@ function streamResponse() {
       activeStream = null;
       processQueue();
     },
-    onError(message) {
-      clearTimeout(streamTimer);
-      streamTimer = null;
+    onError(message: string) {
+      if (streamTimer) {
+        clearTimeout(streamTimer);
+        streamTimer = null;
+      }
       removeTyping(indicator);
       appendMessage("bot", `Error: ${message}`);
       activeStream = null;
@@ -159,7 +201,7 @@ function streamResponse() {
   });
 }
 
-function send() {
+function send(): void {
   const text = inputEl.value.trim();
   if (!text) return;
 
@@ -186,7 +228,7 @@ function send() {
 
 sendEl.addEventListener("click", send);
 
-inputEl.addEventListener("keydown", (e) => {
+inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     send();

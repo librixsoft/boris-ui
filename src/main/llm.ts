@@ -1,12 +1,63 @@
-const { ipcMain } = require("electron");
-const { listTools, executeTool } = require("./tools/registry");
+import { ipcMain, IpcMainInvokeEvent } from "electron";
+import { listTools, executeTool, Tool } from "./tools/registry";
 
-const LLM_CONFIG = {
+export interface LLMConfig {
+  baseUrl: string;
+  model: string;
+}
+
+export interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface ChatPayload {
+  requestId: string;
+  messages: ChatMessage[];
+}
+
+export interface SSEError {
+  error: {
+    message: string;
+  };
+}
+
+export interface SSEChoice {
+  delta: {
+    content?: string;
+  };
+}
+
+export interface SSEResponse {
+  choices?: SSEChoice[];
+  error?: {
+    message: string;
+  };
+}
+
+export interface ToolCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface StreamHandlers {
+  onChunk: (content: string) => void;
+  onDone: () => void;
+  onError: (message: string) => void;
+}
+
+export interface ChatStreamResult {
+  stop(): void;
+}
+
+const LLM_CONFIG: LLMConfig = {
   baseUrl: "http://192.168.1.67:8080",
-  model: "gemma4-4b-64k:latest"
+  model: "gemma-4b-64k:latest"
 };
 
-function buildSystemPrompt(tools) {
+const abortControllers = new Map<string, AbortController>();
+
+function buildSystemPrompt(tools: Tool[]): string {
   const toolInstructions = tools
     .map(
       (t) =>
@@ -30,15 +81,13 @@ ${toolInstructions}
 Después de ejecutar herramientas, confirmá al usuario lo que se hizo.`;
 }
 
-const abortControllers = new Map();
-
-function sendToRenderer(event, channel, requestId, extra) {
+function sendToRenderer(event: IpcMainInvokeEvent, channel: string, requestId: string, extra: Record<string, unknown>): void {
   if (!event.sender.isDestroyed()) {
     event.sender.send(channel, { requestId, ...extra });
   }
 }
 
-function parseSseLine(line) {
+function parseSseLine(line: string): { type: "done" | "error" | "content"; content?: string; message?: string } | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith("data:")) return null;
 
@@ -48,7 +97,7 @@ function parseSseLine(line) {
   if (data === "[DONE]") return { type: "done" };
 
   try {
-    const parsed = JSON.parse(data);
+    const parsed = JSON.parse(data) as SSEResponse;
 
     if (parsed.error) {
       return { type: "error", message: parsed.error.message || "Error del servidor llama.cpp" };
@@ -68,33 +117,33 @@ function parseSseLine(line) {
   return null;
 }
 
-function collectToolCalls(rawBuffer) {
+function collectToolCalls(rawBuffer: string): ToolCall[] {
   const toolRegex = /<tool\s+name="([^"]+)">([\s\S]*?)<\/tool>/g;
-  const toolCalls = [];
-  let match;
+  const toolCalls: ToolCall[] = [];
+  let match: RegExpExecArray | null;
 
   while ((match = toolRegex.exec(rawBuffer)) !== null) {
     toolCalls.push({
       name: match[1],
-      args: JSON.parse(match[2])
+      args: JSON.parse(match[2]) as Record<string, unknown>
     });
   }
 
   return toolCalls;
 }
 
-function extractCleanText(rawBuffer) {
+function extractCleanText(rawBuffer: string): string {
   return rawBuffer.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
 }
 
-async function streamChatCompletion(event, payload) {
+async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayload): Promise<void> {
   const { requestId, messages } = payload;
   const controller = new AbortController();
   abortControllers.set(requestId, controller);
 
   const tools = listTools();
   const systemPrompt = buildSystemPrompt(tools);
-  let currentMessages = [{ role: "system", content: systemPrompt }, ...messages];
+  let currentMessages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...messages];
 
   try {
     while (true) {
@@ -117,13 +166,13 @@ async function streamChatCompletion(event, payload) {
         throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
       }
 
-      const reader = response.body.getReader();
+      const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let rawBuffer = "";
       let finished = false;
       let displayOffset = 0;
-      let pendingCalls = [];
+      let pendingCalls: ToolCall[] = [];
 
       while (!finished) {
         const { done, value } = await reader.read();
@@ -131,7 +180,7 @@ async function streamChatCompletion(event, payload) {
 
         buffer += decoder.decode(value, { stream: true });
 
-        let boundary;
+        let boundary: number;
         while ((boundary = buffer.indexOf("\n")) !== -1 && !finished) {
           const line = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 1);
@@ -142,9 +191,9 @@ async function streamChatCompletion(event, payload) {
           if (result.type === "done") {
             finished = true;
           } else if (result.type === "error") {
-            throw new Error(result.message);
+            throw new Error(result.message!);
           } else if (result.type === "content") {
-            rawBuffer += result.content;
+            rawBuffer += result.content!;
             const cleanText = extractCleanText(rawBuffer.slice(displayOffset));
             displayOffset = rawBuffer.length - cleanText.length;
 
@@ -183,11 +232,12 @@ async function streamChatCompletion(event, payload) {
       break;
     }
   } catch (error) {
-    if (error.name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError") {
       sendToRenderer(event, "boris:chat:done", requestId, {});
     } else {
+      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
       sendToRenderer(event, "boris:chat:error", requestId, {
-        message: error.message
+        message: errorMessage
       });
       sendToRenderer(event, "boris:chat:done", requestId, {});
     }
@@ -196,16 +246,16 @@ async function streamChatCompletion(event, payload) {
   }
 }
 
-function abortChatCompletion(_event, payload) {
+function abortChatCompletion(_event: IpcMainInvokeEvent, payload: { requestId: string }): void {
   const controller = abortControllers.get(payload.requestId);
   if (controller) {
     controller.abort();
   }
 }
 
-function registerLlmIpc() {
+export function registerLlmIpc(): void {
   ipcMain.handle("boris:chat:stream", streamChatCompletion);
   ipcMain.handle("boris:chat:abort", abortChatCompletion);
 }
 
-module.exports = { registerLlmIpc, LLM_CONFIG };
+export { LLM_CONFIG };

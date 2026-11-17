@@ -1,0 +1,90 @@
+import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
+
+interface ChatHandlers {
+  onChunk: (content: string) => void;
+  onDone: () => void;
+  onError: (message: string) => void;
+}
+
+interface AttachListenersResult {
+  (): void;
+}
+
+function attachListeners(requestId: string, handlers: ChatHandlers): AttachListenersResult {
+  const onChunk = (_event: IpcRendererEvent, data: { requestId: string; content: string }): void => {
+    if (data.requestId === requestId) {
+      handlers.onChunk(data.content);
+    }
+  };
+
+  const onDone = (_event: IpcRendererEvent, data: { requestId: string }): void => {
+    if (data.requestId !== requestId) return;
+    detach();
+    handlers.onDone();
+  };
+
+  const onError = (_event: IpcRendererEvent, data: { requestId: string; message: string }): void => {
+    if (data.requestId !== requestId) return;
+    detach();
+    handlers.onError(data.message);
+  };
+
+  function detach(): void {
+    ipcRenderer.off("boris:chat:chunk", onChunk);
+    ipcRenderer.off("boris:chat:done", onDone);
+    ipcRenderer.off("boris:chat:error", onError);
+  }
+
+  ipcRenderer.on("boris:chat:chunk", onChunk);
+  ipcRenderer.on("boris:chat:done", onDone);
+  ipcRenderer.on("boris:chat:error", onError);
+
+  return detach;
+}
+
+interface ChatApi {
+  stream(messages: Array<{ role: string; content: string }>, handlers: ChatHandlers): { stop(): void };
+}
+
+interface ToolsApi {
+  execute(name: string, params: Record<string, unknown>): Promise<unknown>;
+  list(): Promise<unknown>;
+}
+
+interface BorisApi {
+  platform: string;
+  chat: ChatApi;
+  tools: ToolsApi;
+}
+
+declare global {
+  interface Window {
+    boris: BorisApi;
+  }
+}
+
+contextBridge.exposeInMainWorld("boris", {
+  platform: process.platform,
+  chat: {
+    stream(messages: Array<{ role: string; content: string }>, handlers: ChatHandlers): { stop(): void } {
+      const requestId = crypto.randomUUID();
+      const detach = attachListeners(requestId, handlers);
+
+      ipcRenderer.invoke("boris:chat:stream", { requestId, messages });
+
+      return {
+        stop() {
+          ipcRenderer.invoke("boris:chat:abort", { requestId });
+        }
+      };
+    }
+  },
+  tools: {
+    execute(name: string, params: Record<string, unknown>): Promise<unknown> {
+      return ipcRenderer.invoke("boris:tools:execute", { name, params });
+    },
+    list(): Promise<unknown> {
+      return ipcRenderer.invoke("boris:tools:list");
+    }
+  }
+});

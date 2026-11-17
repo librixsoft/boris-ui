@@ -1,8 +1,9 @@
-const fs = require("fs");
-const path = require("path");
-const { resolveSafePath } = require("./workspace");
+import * as fs from "fs";
+import * as path from "path";
+import { resolveSafePath } from "./workspace";
+import { Tool } from "./registry";
 
-module.exports = {
+const tool: Tool = {
   name: "renamePath",
   description: "Renombra un archivo o carpeta dentro del workspace.",
   schema: {
@@ -20,9 +21,9 @@ module.exports = {
     required: ["from", "to"],
     additionalProperties: false
   },
-  async execute(params) {
-    const fromPath = resolveSafePath(params.from);
-    const toPath = resolveSafePath(params.to);
+  async execute(params: Record<string, unknown>): Promise<{ success: boolean; from: string; to: string; error?: string }> {
+    const fromPath = resolveSafePath(params.from as string);
+    const toPath = resolveSafePath(params.to as string);
 
     const toDir = path.dirname(toPath);
     if (!fs.existsSync(toDir)) {
@@ -32,7 +33,9 @@ module.exports = {
     if (!fs.existsSync(fromPath)) {
       return {
         success: false,
-        error: `Origen no encontrado: ${params.from}`
+        error: `Origen no encontrado: ${params.from}`,
+        from: params.from as string,
+        to: params.to as string
       };
     }
 
@@ -40,8 +43,10 @@ module.exports = {
 
     return {
       success: true,
-      from: params.from,
-      to: params.to
+      from: params.from as string,
+      to: params.to as string
     };
   }
 };
+
+export const { name, description, schema, execute } = tool;
