@@ -209,6 +209,9 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
       }
 
+      let assistantContentBuffer = "";
+      let hasLoggedAssistantContent = false;
+
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -244,6 +247,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             sendToRenderer(event, "boris:chat:reasoning", requestId, { content: result.content! });
             } else if (result.type === "content") {
             rawBuffer += result.content!;
+            assistantContentBuffer += result.content!;
 
             if (hasReasoning) {
               const extracted = extractReasoningFromTags(rawBuffer);
@@ -268,16 +272,6 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
               lastLoggedContent = cleanContent;
               if (contentDelta) {
                 sendToRenderer(event, "boris:chat:chunk", requestId, { content: contentDelta });
-
-                await executeLogSession({
-                  action: "append",
-                  sessionId,
-                  entry: {
-                    type: "conversation",
-                    role: "assistant",
-                    content: contentDelta
-                  }
-                });
               }
             } else {
               const newRaw = rawBuffer.slice(rawOffset);
@@ -292,24 +286,14 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
 
               if (delta) {
                 sendToRenderer(event, "boris:chat:chunk", requestId, { content: delta });
-
-                await executeLogSession({
-                  action: "append",
-                  sessionId,
-                  entry: {
-                    type: "conversation",
-                    role: "assistant",
-                    content: delta
-                  }
-                });
               }
-
-              const newCalls = collectToolCalls(newRaw);
-              pendingCalls.push(...newCalls);
             }
           }
         }
       }
+
+      const finalCalls = collectToolCalls(rawBuffer);
+      pendingCalls.push(...finalCalls);
 
       if (pendingCalls.length > 0) {
         for (const call of pendingCalls) {
@@ -353,7 +337,37 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           });
         }
 
+        const streamedContent = assistantContentBuffer.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
+        if (streamedContent && !hasLoggedAssistantContent) {
+          await executeLogSession({
+            action: "append",
+            sessionId,
+            entry: {
+              type: "conversation",
+              role: "assistant",
+              content: streamedContent
+            }
+          });
+          hasLoggedAssistantContent = true;
+        }
+
+        assistantContentBuffer = "";
         continue;
+      }
+
+      if (assistantContentBuffer.trim() && !hasLoggedAssistantContent) {
+        const cleanContent = assistantContentBuffer.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
+        if (cleanContent) {
+          await executeLogSession({
+            action: "append",
+            sessionId,
+            entry: {
+              type: "conversation",
+              role: "assistant",
+              content: cleanContent
+            }
+          });
+        }
       }
 
       sendToRenderer(event, "boris:chat:done", requestId, {});
