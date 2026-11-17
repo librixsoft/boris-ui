@@ -28,7 +28,7 @@ interface WindowBorisChat {
     onError: (message: string) => void;
     onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
     onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
-  }): ChatStreamResult;
+  }, sessionId?: string): ChatStreamResult;
 }
 
 interface WindowBoris {
@@ -50,6 +50,7 @@ let messageQueue: string[] = [];
 let currentReasoningBlock: HTMLDivElement | null = null;
 let hasReasoning = false;
 let pendingToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+let chatSessionId: string | null = null;
 
 function scrollToBottom(): void {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -394,6 +395,10 @@ function streamResponse(): void {
     }
   }, 900000);
 
+  if (!chatSessionId) {
+    chatSessionId = crypto.randomUUID();
+  }
+
   activeStream = window.boris.chat.stream(chatHistory, {
     onChunk(chunk: string) {
       content += chunk;
@@ -446,7 +451,7 @@ function streamResponse(): void {
       activeStream = null;
       processQueue();
     }
-  });
+  }, chatSessionId || undefined);
 }
 
 function send(): void {

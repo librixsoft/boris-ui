@@ -14,6 +14,7 @@ export interface ChatMessage {
 
 export interface ChatPayload {
   requestId: string;
+  sessionId?: string;
   messages: ChatMessage[];
 }
 
@@ -78,10 +79,10 @@ Cuando necesites realizar una operación en el sistema de archivos, emití un bl
 
 Esperá el resultado antes de continuar. Podés encadenar múltiples tool calls.
 
-Herramientas disponibles:
-${toolInstructions}
+Después de ejecutar herramientas, confirmá al usuario lo que se hizo y terminá. No generes razonamiento adicional tras recibir el resultado de una herramienta.
 
-Después de ejecutar herramientas, confirmá al usuario lo que se hizo.`;
+Herramientas disponibles:
+${toolInstructions}`;
 }
 
 function sendToRenderer(event: IpcMainInvokeEvent, channel: string, requestId: string, extra: Record<string, unknown>): void {
@@ -167,11 +168,11 @@ function extractReasoningFromTags(rawBuffer: string): { reasoning: string; conte
 }
 
 async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayload): Promise<void> {
-  const { requestId, messages } = payload;
+  const { requestId, sessionId: payloadSessionId, messages } = payload;
   const controller = new AbortController();
   abortControllers.set(requestId, controller);
 
-  const sessionId = "session-" + new Date().toISOString().replace(/[^0-9]/g, "-") + "Z";
+  const sessionId = payloadSessionId || "session-" + new Date().toISOString().replace(/[^0-9]/g, "-") + "Z";
   await executeLogSession({ action: "init", sessionId, prompt: messages[messages.length - 1]?.content?.slice(0, 200) || "" });
 
   await executeLogSession({
@@ -220,6 +221,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       let finished = false;
       let rawOffset = 0;
       let pendingCalls: ToolCall[] = [];
+      let postToolCallIterations = 0;
       let hasReasoning = false;
       let lastLoggedContent = "";
 
@@ -252,15 +254,16 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             if (hasReasoning) {
               const extracted = extractReasoningFromTags(rawBuffer);
               if (extracted.reasoning) {
-                reasoningBuffer += extracted.reasoning;
-                sendToRenderer(event, "boris:chat:reasoning", requestId, { content: extracted.reasoning });
+                const cleanReasoning = extracted.reasoning.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
+                reasoningBuffer += cleanReasoning;
+                sendToRenderer(event, "boris:chat:reasoning", requestId, { content: cleanReasoning });
 
                 await executeLogSession({
                   action: "append",
                   sessionId,
                   entry: {
                     type: "reasoning",
-                    content: extracted.reasoning
+                    content: cleanReasoning
                   }
                 });
               }
@@ -296,12 +299,13 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       pendingCalls.push(...finalCalls);
 
       if (pendingCalls.length > 0) {
+        postToolCallIterations++;
+        if (postToolCallIterations >= 3) {
+          break;
+        }
+
         for (const call of pendingCalls) {
           sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args });
-
-          sendToRenderer(event, "boris:chat:chunk", requestId, {
-            content: `[Ejecutando ${call.name}...]`
-          });
 
           const toolStart = Date.now();
           let result: { success: boolean; path?: string; error?: string };
@@ -351,12 +355,13 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
               enrichmentChunk += `Búsqueda "${browserResult.query}": ${browserResult.found ? "encontrado" : "no encontrado"}\n`;
             }
             if (browserResult.text && browserResult.text.length > 0) {
-              const truncated = browserResult.text.length > 2000 ? browserResult.text.slice(0, 2000) + "..." : browserResult.text;
+              const truncated = browserResult.text.length > 500 ? browserResult.text.slice(0, 500) + "..." : browserResult.text;
               enrichmentChunk += `Texto: ${truncated}\n`;
             }
+            const { screenshot: _, ...browserResultWithoutScreenshot } = browserResult as Record<string, unknown>;
             toolResultPayload = {
-              ...browserResult,
-              text: browserResult.text && browserResult.text.length > 2000 ? browserResult.text.slice(0, 2000) + "..." : browserResult.text
+              ...browserResultWithoutScreenshot,
+              text: browserResult.text && browserResult.text.length > 500 ? browserResult.text.slice(0, 500) + "..." : browserResult.text
             };
           }
 
@@ -364,11 +369,6 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             name: call.name,
             result: toolResultPayload,
             success
-          });
-
-          const chunkContent = enrichmentChunk ? `[Resultado ${call.name}]:\n${enrichmentChunk}` : `[Resultado ${call.name}]: ${result.success ? "OK" : result.error}`;
-          sendToRenderer(event, "boris:chat:chunk", requestId, {
-            content: chunkContent
           });
 
           currentMessages.push({

@@ -70,7 +70,7 @@ function attachListeners(requestId: string, handlers: ChatHandlers): AttachListe
 }
 
 interface ChatApi {
-  stream(messages: Array<{ role: string; content: string }>, handlers: ChatHandlers): { stop(): void };
+  stream(messages: Array<{ role: string; content: string }>, handlers: ChatHandlers, sessionId?: string): { stop(): void };
 }
 
 interface ToolsApi {
@@ -93,11 +93,12 @@ declare global {
 contextBridge.exposeInMainWorld("boris", {
   platform: process.platform,
   chat: {
-    stream(messages: Array<{ role: string; content: string }>, handlers: ChatHandlers): { stop(): void } {
+    stream(messages: Array<{ role: string; content: string }>, handlers: ChatHandlers, sessionId?: string): { stop(): void } {
       const requestId = crypto.randomUUID();
+      const chatSessionId = sessionId || crypto.randomUUID();
       const detach = attachListeners(requestId, handlers);
 
-      ipcRenderer.invoke("boris:chat:stream", { requestId, messages });
+      ipcRenderer.invoke("boris:chat:stream", { requestId, sessionId: chatSessionId, messages });
 
       return {
         stop() {
