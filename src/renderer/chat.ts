@@ -237,6 +237,11 @@ function renderToolCall(name: string, args: Record<string, unknown>): void {
 }
 
 function renderToolResult(name: string, result: unknown, success: boolean): void {
+  if (name === "browser") {
+    renderBrowserResult(result, success);
+    return;
+  }
+
   const wrapper = document.createElement("div");
   wrapper.className = `tool-result tool-result--${success ? "success" : "error"}`;
 
@@ -269,6 +274,99 @@ function renderToolResult(name: string, result: unknown, success: boolean): void
   wrapper.appendChild(info);
   messagesEl.appendChild(wrapper);
   scrollToBottom();
+}
+
+function renderBrowserResult(result: unknown, success: boolean): void {
+  const wrapper = document.createElement("div");
+  wrapper.className = `tool-result tool-result--browser tool-result--${success ? "success" : "error"}`;
+
+  const icon = document.createElement("span");
+  icon.className = `tool-icon tool-icon--${success ? "success" : "error"}`;
+  icon.textContent = success ? "✓" : "✗";
+
+  const info = document.createElement("div");
+  info.className = "tool-info";
+
+  const nameEl = document.createElement("div");
+  nameEl.className = "tool-name";
+  nameEl.textContent = "Browser";
+
+  const statusEl = document.createElement("div");
+  statusEl.className = `tool-status tool-status--${success ? "success" : "error"}`;
+  statusEl.textContent = success ? "Completado" : "Error";
+
+  info.appendChild(nameEl);
+  info.appendChild(statusEl);
+
+  if (result && typeof result === "object") {
+    const browserResult = result as Record<string, unknown>;
+
+    if (browserResult.url) {
+      const urlEl = document.createElement("div");
+      urlEl.className = "browser-detail";
+      urlEl.innerHTML = `<span class="browser-detail-label">URL:</span> <span class="browser-detail-value">${escapeHtml(String(browserResult.url))}</span>`;
+      info.appendChild(urlEl);
+    }
+
+    if (browserResult.title) {
+      const titleEl = document.createElement("div");
+      titleEl.className = "browser-detail";
+      titleEl.innerHTML = `<span class="browser-detail-label">Título:</span> <span class="browser-detail-value">${escapeHtml(String(browserResult.title))}</span>`;
+      info.appendChild(titleEl);
+    }
+
+    if (browserResult.selector) {
+      const selEl = document.createElement("div");
+      selEl.className = "browser-detail";
+      selEl.innerHTML = `<span class="browser-detail-label">Selector:</span> <span class="browser-detail-value">${escapeHtml(String(browserResult.selector))}</span>`;
+      info.appendChild(selEl);
+    }
+
+    if (browserResult.key) {
+      const keyEl = document.createElement("div");
+      keyEl.className = "browser-detail";
+      keyEl.innerHTML = `<span class="browser-detail-label">Tecla:</span> <span class="browser-detail-value">${escapeHtml(String(browserResult.key))}</span>`;
+      info.appendChild(keyEl);
+    }
+
+    if (browserResult.query !== undefined) {
+      const searchEl = document.createElement("div");
+      searchEl.className = "browser-detail";
+      const found = browserResult.found ? "encontrado" : "no encontrado";
+      searchEl.innerHTML = `<span class="browser-detail-label">Búsqueda "${escapeHtml(String(browserResult.query))}":</span> <span class="browser-detail-value">${found}</span>`;
+      info.appendChild(searchEl);
+    }
+
+    if (browserResult.text) {
+      const textEl = document.createElement("pre");
+      textEl.className = "tool-output browser-text";
+      textEl.textContent = String(browserResult.text);
+      info.appendChild(textEl);
+    }
+
+    if (browserResult.screenshot) {
+      const imgWrapper = document.createElement("div");
+      imgWrapper.className = "browser-screenshot";
+
+      const img = document.createElement("img");
+      img.src = `data:image/png;base64,${browserResult.screenshot}`;
+      img.alt = "Captura de pantalla del navegador";
+      imgWrapper.appendChild(img);
+
+      info.appendChild(imgWrapper);
+    }
+  }
+
+  wrapper.appendChild(icon);
+  wrapper.appendChild(info);
+  messagesEl.appendChild(wrapper);
+  scrollToBottom();
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 function streamResponse(): void {

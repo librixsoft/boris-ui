@@ -330,14 +330,45 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           });
 
           const success = result.success !== false;
+          let toolResultPayload: Record<string, unknown> = success ? { path: result.path } : { error: result.error };
+          let enrichmentChunk = "";
+
+          if (call.name === "browser" && success) {
+            const browserResult = result as { url?: string; selector?: string; value?: string; text?: string; screenshot?: string; title?: string; key?: string; query?: string; found?: boolean };
+            if (browserResult.url) {
+              enrichmentChunk += `URL: ${browserResult.url}\n`;
+            }
+            if (browserResult.title) {
+              enrichmentChunk += `Título: ${browserResult.title}\n`;
+            }
+            if (browserResult.selector) {
+              enrichmentChunk += `Selector: ${browserResult.selector}\n`;
+            }
+            if (browserResult.key) {
+              enrichmentChunk += `Tecla: ${browserResult.key}\n`;
+            }
+            if (browserResult.query !== undefined) {
+              enrichmentChunk += `Búsqueda "${browserResult.query}": ${browserResult.found ? "encontrado" : "no encontrado"}\n`;
+            }
+            if (browserResult.text && browserResult.text.length > 0) {
+              const truncated = browserResult.text.length > 2000 ? browserResult.text.slice(0, 2000) + "..." : browserResult.text;
+              enrichmentChunk += `Texto: ${truncated}\n`;
+            }
+            toolResultPayload = {
+              ...browserResult,
+              text: browserResult.text && browserResult.text.length > 2000 ? browserResult.text.slice(0, 2000) + "..." : browserResult.text
+            };
+          }
+
           sendToRenderer(event, "boris:chat:tool-result", requestId, {
             name: call.name,
-            result: success ? { path: result.path } : { error: result.error },
+            result: toolResultPayload,
             success
           });
 
+          const chunkContent = enrichmentChunk ? `[Resultado ${call.name}]:\n${enrichmentChunk}` : `[Resultado ${call.name}]: ${result.success ? "OK" : result.error}`;
           sendToRenderer(event, "boris:chat:chunk", requestId, {
-            content: `[Resultado ${call.name}]: ${result.success ? "OK" : result.error}`
+            content: chunkContent
           });
 
           currentMessages.push({

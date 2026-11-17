@@ -1,25 +1,27 @@
 import BrowserController from "../browser/BrowserController";
 import { Tool } from "./registry";
 
-type BrowserAction = "navigate" | "click" | "fill" | "extract" | "close";
+type BrowserAction = "navigate" | "click" | "fill" | "extract" | "close" | "pressKey" | "search" | "screenshot" | "title" | "url";
 
 interface BrowserParams {
   action: BrowserAction;
   url?: string;
   selector?: string;
   value?: string;
+  key?: string;
+  query?: string;
 }
 
 const tool: Tool = {
   name: "browser",
   description:
-    "Navegación web visible. Abre un navegador en ventana visible y permite ir a una URL, hacer clic, rellenar campos y extraer texto. La ventana se mantiene abierta hasta que se cierra.",
+    "Navegación web visible. Abre un navegador en ventana visible y permite ir a una URL, hacer clic, rellenar campos, extraer texto, presionar teclas, buscar en la página, capturar pantalla y obtener título/URL. La ventana se mantiene abierta hasta que se cierra.",
   schema: {
     type: "object",
     properties: {
       action: {
         type: "string",
-        enum: ["navigate", "click", "fill", "extract", "close"],
+        enum: ["navigate", "click", "fill", "extract", "close", "pressKey", "search", "screenshot", "title", "url"],
         description: "Acción de navegación a ejecutar"
       },
       url: {
@@ -33,12 +35,20 @@ const tool: Tool = {
       value: {
         type: "string",
         description: "Valor a escribir (requerido para action fill)"
+      },
+      key: {
+        type: "string",
+        description: "Tecla a presionar (requerido para action pressKey). Ej: Enter, Tab, Escape, Backspace"
+      },
+      query: {
+        type: "string",
+        description: "Texto a buscar en la página (requerido para action search)"
       }
     },
     required: ["action"],
     additionalProperties: false
   },
-  async execute(params: Record<string, unknown>): Promise<{ success: boolean; url?: string; selector?: string; value?: string; text?: string; error?: string }> {
+  async execute(params: Record<string, unknown>): Promise<{ success: boolean; url?: string; selector?: string; value?: string; text?: string; error?: string; screenshot?: string; title?: string; key?: string; query?: string; found?: boolean }> {
     const action = params.action as BrowserAction;
 
     switch (action) {
@@ -68,6 +78,27 @@ const tool: Tool = {
       }
       case "close": {
         return await BrowserController.close();
+      }
+      case "pressKey": {
+        if (!params.key) {
+          throw new Error("action pressKey requiere key");
+        }
+        return await BrowserController.pressKey(params.key as string);
+      }
+      case "search": {
+        if (!params.query) {
+          throw new Error("action search requiere query");
+        }
+        return await BrowserController.search(params.query as string);
+      }
+      case "screenshot": {
+        return await BrowserController.screenshot();
+      }
+      case "title": {
+        return await BrowserController.getTitle();
+      }
+      case "url": {
+        return await BrowserController.getUrl();
       }
       default:
         throw new Error(`Acción de browser no soportada: ${action}`);
