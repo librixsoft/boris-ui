@@ -23,6 +23,7 @@ interface ChatStreamResult {
 interface WindowBorisChat {
   stream(messages: ChatMessage[], handlers: {
     onChunk: (content: string) => void;
+    onReasoning: (content: string) => void;
     onDone: () => void;
     onError: (message: string) => void;
   }): ChatStreamResult;
@@ -42,8 +43,10 @@ const sendEl = document.getElementById("send") as SendElement;
 
 const chatHistory: ChatMessage[] = [];
 let activeStream: ChatStreamResult | null = null;
-let streamTimer: NodeJS.Timeout | null = null;
+let streamTimer: ReturnType<typeof setTimeout> | null = null;
 let messageQueue: string[] = [];
+let currentReasoningBlock: HTMLDivElement | null = null;
+let hasReasoning = false;
 
 function scrollToBottom(): void {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -142,10 +145,56 @@ function clearQueue(): void {
   }
 }
 
+function createReasoningBlock(): HTMLDivElement {
+  const block = document.createElement("div");
+  block.className = "reasoning-block";
+
+  const label = document.createElement("div");
+  label.className = "reasoning-label";
+  label.textContent = "Razonamiento";
+  block.appendChild(label);
+
+  const content = document.createElement("div");
+  content.className = "reasoning-content";
+  block.appendChild(content);
+
+  const toggle = document.createElement("button");
+  toggle.className = "reasoning-toggle";
+  toggle.textContent = "Ocultar";
+  toggle.addEventListener("click", () => {
+    const isCollapsed = block.classList.toggle("collapsed");
+    toggle.textContent = isCollapsed ? "Mostrar razonamiento" : "Ocultar";
+  });
+  block.appendChild(toggle);
+
+  return block;
+}
+
+function appendReasoningToBotMessage(): HTMLDivElement {
+  const botMessages = document.querySelectorAll(".message.bot");
+  let target: HTMLElement;
+
+  if (botMessages.length > 0) {
+    target = botMessages[botMessages.length - 1] as HTMLElement;
+  } else {
+    const wrapper = document.createElement("div");
+    wrapper.className = "message bot";
+    messagesEl.appendChild(wrapper);
+    target = wrapper;
+  }
+
+  const block = createReasoningBlock();
+  target.insertBefore(block, target.querySelector(".bubble") || null);
+  scrollToBottom();
+  return block;
+}
+
 function streamResponse(): void {
   const indicator = appendTyping();
   let streamingBubble: HTMLDivElement | null = null;
   let content = "";
+  hasReasoning = false;
+  currentReasoningBlock = null;
 
   if (streamTimer) {
     clearTimeout(streamTimer);
@@ -172,6 +221,17 @@ function streamResponse(): void {
         streamingBubble = appendMessage("bot", content);
       } else {
         streamingBubble.textContent = content;
+        scrollToBottom();
+      }
+    },
+    onReasoning(chunk: string) {
+      hasReasoning = true;
+      if (!currentReasoningBlock) {
+        currentReasoningBlock = appendReasoningToBotMessage();
+      }
+      const reasoningContent = currentReasoningBlock.querySelector(".reasoning-content") as HTMLElement;
+      if (reasoningContent) {
+        reasoningContent.textContent += chunk;
         scrollToBottom();
       }
     },
