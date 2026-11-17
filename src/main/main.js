@@ -1,6 +1,7 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const { registerLlmIpc } = require("./llm");
+const { registerToolsIpc } = require("./tools/handler");
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -21,6 +22,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerLlmIpc();
+  registerToolsIpc(ipcMain);
   createWindow();
 
   app.on("activate", () => {

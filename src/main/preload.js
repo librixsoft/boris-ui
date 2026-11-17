@@ -45,5 +45,13 @@ contextBridge.exposeInMainWorld("boris", {
         }
       };
     }
+  },
+  tools: {
+    execute(name, params) {
+      return ipcRenderer.invoke("boris:tools:execute", { name, params });
+    },
+    list() {
+      return ipcRenderer.invoke("boris:tools:list");
+    }
   }
 });

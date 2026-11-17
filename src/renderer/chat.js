@@ -4,6 +4,7 @@ const sendEl = document.getElementById("send");
 
 const chatHistory = [];
 let activeStream = null;
+let streamTimer = null;
 
 function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -58,6 +59,24 @@ function streamResponse() {
   let streamingBubble = null;
   let content = "";
 
+  if (streamTimer) {
+    clearTimeout(streamTimer);
+    streamTimer = null;
+  }
+
+  streamTimer = setTimeout(() => {
+    if (activeStream) {
+      activeStream.stop();
+      setSending(false);
+      inputEl.focus();
+      if (!streamingBubble) {
+        removeTyping(indicator);
+      }
+      appendMessage("bot", "Tiempo de espera agotado.");
+      activeStream = null;
+    }
+  }, 30000);
+
   activeStream = window.boris.chat.stream(chatHistory, {
     onChunk(chunk) {
       content += chunk;
@@ -70,6 +89,8 @@ function streamResponse() {
       }
     },
     onDone() {
+      clearTimeout(streamTimer);
+      streamTimer = null;
       if (!streamingBubble) {
         removeTyping(indicator);
         streamingBubble = appendMessage("bot", "Sin respuesta del modelo.");
@@ -80,6 +101,8 @@ function streamResponse() {
       inputEl.focus();
     },
     onError(message) {
+      clearTimeout(streamTimer);
+      streamTimer = null;
       removeTyping(indicator);
       appendMessage("bot", `Error: ${message}`);
       activeStream = null;
