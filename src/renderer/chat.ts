@@ -211,7 +211,7 @@ function streamResponse(): void {
       activeStream = null;
       processQueue();
     }
-  }, 30000);
+  }, 900000);
 
   activeStream = window.boris.chat.stream(chatHistory, {
     onChunk(chunk: string) {
