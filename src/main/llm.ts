@@ -174,6 +174,16 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
   const sessionId = "session-" + new Date().toISOString().replace(/[^0-9]/g, "-") + "Z";
   await executeLogSession({ action: "init", sessionId, prompt: messages[messages.length - 1]?.content?.slice(0, 200) || "" });
 
+  await executeLogSession({
+    action: "append",
+    sessionId,
+    entry: {
+      type: "conversation",
+      role: "user",
+      content: messages[messages.length - 1]?.content || ""
+    }
+  });
+
   const tools = listTools();
   const systemPrompt = buildSystemPrompt(tools);
   let currentMessages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...messages];
@@ -205,7 +215,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       let rawBuffer = "";
       let reasoningBuffer = "";
       let finished = false;
-      let displayOffset = 0;
+      let rawOffset = 0;
       let pendingCalls: ToolCall[] = [];
       let hasReasoning = false;
 
@@ -231,7 +241,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             hasReasoning = true;
             reasoningBuffer += result.content!;
             sendToRenderer(event, "boris:chat:reasoning", requestId, { content: result.content! });
-          } else if (result.type === "content") {
+            } else if (result.type === "content") {
             rawBuffer += result.content!;
 
             if (hasReasoning) {
@@ -239,20 +249,50 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
               if (extracted.reasoning) {
                 reasoningBuffer += extracted.reasoning;
                 sendToRenderer(event, "boris:chat:reasoning", requestId, { content: extracted.reasoning });
+
+                await executeLogSession({
+                  action: "append",
+                  sessionId,
+                  entry: {
+                    type: "reasoning",
+                    content: extracted.reasoning
+                  }
+                });
               }
               const cleanContent = extracted.content.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
               if (cleanContent) {
                 sendToRenderer(event, "boris:chat:chunk", requestId, { content: cleanContent });
+
+                await executeLogSession({
+                  action: "append",
+                  sessionId,
+                  entry: {
+                    type: "conversation",
+                    role: "assistant",
+                    content: cleanContent
+                  }
+                });
               }
             } else {
-              const cleanText = extractCleanText(rawBuffer.slice(displayOffset));
-              displayOffset = rawBuffer.length - cleanText.length;
+              const newRaw = rawBuffer.slice(rawOffset);
+              const cleanText = extractCleanText(newRaw);
+              rawOffset = rawBuffer.length;
 
               if (cleanText) {
                 sendToRenderer(event, "boris:chat:chunk", requestId, { content: cleanText });
+
+                await executeLogSession({
+                  action: "append",
+                  sessionId,
+                  entry: {
+                    type: "conversation",
+                    role: "assistant",
+                    content: cleanText
+                  }
+                });
               }
 
-              const newCalls = collectToolCalls(rawBuffer.slice(displayOffset));
+              const newCalls = collectToolCalls(newRaw);
               pendingCalls.push(...newCalls);
             }
           }
@@ -312,6 +352,16 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       sendToRenderer(event, "boris:chat:done", requestId, {});
     } else {
       const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+
+      await executeLogSession({
+        action: "append",
+        sessionId,
+        entry: {
+          type: "error",
+          content: errorMessage
+        }
+      });
+
       sendToRenderer(event, "boris:chat:error", requestId, {
         message: errorMessage
       });
