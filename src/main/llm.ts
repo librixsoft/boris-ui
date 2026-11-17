@@ -218,6 +218,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       let rawOffset = 0;
       let pendingCalls: ToolCall[] = [];
       let hasReasoning = false;
+      let lastLoggedContent = "";
 
       while (!finished) {
         const { done, value } = await reader.read();
@@ -260,8 +261,13 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
                 });
               }
               const cleanContent = extracted.content.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
-              if (cleanContent) {
-                sendToRenderer(event, "boris:chat:chunk", requestId, { content: cleanContent });
+              let contentDelta = cleanContent;
+              if (lastLoggedContent && cleanContent.startsWith(lastLoggedContent)) {
+                contentDelta = cleanContent.slice(lastLoggedContent.length);
+              }
+              lastLoggedContent = cleanContent;
+              if (contentDelta) {
+                sendToRenderer(event, "boris:chat:chunk", requestId, { content: contentDelta });
 
                 await executeLogSession({
                   action: "append",
@@ -269,7 +275,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
                   entry: {
                     type: "conversation",
                     role: "assistant",
-                    content: cleanContent
+                    content: contentDelta
                   }
                 });
               }
@@ -278,8 +284,14 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
               const cleanText = extractCleanText(newRaw);
               rawOffset = rawBuffer.length;
 
-              if (cleanText) {
-                sendToRenderer(event, "boris:chat:chunk", requestId, { content: cleanText });
+              let delta = cleanText;
+              if (lastLoggedContent && cleanText.startsWith(lastLoggedContent)) {
+                delta = cleanText.slice(lastLoggedContent.length);
+              }
+              lastLoggedContent = cleanText;
+
+              if (delta) {
+                sendToRenderer(event, "boris:chat:chunk", requestId, { content: delta });
 
                 await executeLogSession({
                   action: "append",
@@ -287,7 +299,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
                   entry: {
                     type: "conversation",
                     role: "assistant",
-                    content: cleanText
+                    content: delta
                   }
                 });
               }
