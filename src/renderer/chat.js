@@ -2,24 +2,11 @@ const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("input");
 const sendEl = document.getElementById("send");
 
-const CANNED_RESPONSES = [
-  "Interesante, contame mas sobre eso.",
-  "Entiendo. Como puedo ayudarte con eso?",
-  "Buena pregunta. Que esperabas que pasara?",
-  "Anotado. Hay algo mas en lo que pueda ayudarte?",
-  "Ya veo. Puedo darte mas detalles si queres.",
-  "Perfecto, revisemos el problema juntos."
-];
+const chatHistory = [];
+let activeStream = null;
 
-let lastResponseIndex = -1;
-
-function simulateResponse() {
-  let index = Math.floor(Math.random() * CANNED_RESPONSES.length);
-  if (index === lastResponseIndex) {
-    index = (index + 1) % CANNED_RESPONSES.length;
-  }
-  lastResponseIndex = index;
-  return CANNED_RESPONSES[index];
+function scrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function appendMessage(role, text) {
@@ -32,7 +19,8 @@ function appendMessage(role, text) {
 
   wrapper.appendChild(bubble);
   messagesEl.appendChild(wrapper);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  scrollToBottom();
+  return bubble;
 }
 
 function appendTyping() {
@@ -48,7 +36,7 @@ function appendTyping() {
 
   wrapper.appendChild(indicator);
   messagesEl.appendChild(wrapper);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  scrollToBottom();
   return wrapper;
 }
 
@@ -61,22 +49,58 @@ function autoResize() {
   inputEl.style.height = `${Math.min(inputEl.scrollHeight, 120)}px`;
 }
 
+function setSending(isSending) {
+  sendEl.disabled = isSending;
+}
+
+function streamResponse() {
+  const indicator = appendTyping();
+  let streamingBubble = null;
+  let content = "";
+
+  activeStream = window.boris.chat.stream(chatHistory, {
+    onChunk(chunk) {
+      content += chunk;
+      if (!streamingBubble) {
+        removeTyping(indicator);
+        streamingBubble = appendMessage("bot", content);
+      } else {
+        streamingBubble.textContent = content;
+        scrollToBottom();
+      }
+    },
+    onDone() {
+      if (!streamingBubble) {
+        removeTyping(indicator);
+        streamingBubble = appendMessage("bot", "Sin respuesta del modelo.");
+      }
+      chatHistory.push({ role: "assistant", content });
+      activeStream = null;
+      setSending(false);
+      inputEl.focus();
+    },
+    onError(message) {
+      removeTyping(indicator);
+      appendMessage("bot", `Error: ${message}`);
+      activeStream = null;
+      setSending(false);
+      inputEl.focus();
+    }
+  });
+}
+
 function send() {
   const text = inputEl.value.trim();
-  if (!text) return;
+  if (!text || activeStream) return;
 
   appendMessage("user", text);
+  chatHistory.push({ role: "user", content: text });
   inputEl.value = "";
   autoResize();
   inputEl.focus();
 
-  const indicator = appendTyping();
-  const delay = 1000 + Math.floor(Math.random() * 1500);
-
-  setTimeout(() => {
-    removeTyping(indicator);
-    appendMessage("bot", simulateResponse());
-  }, delay);
+  setSending(true);
+  streamResponse();
 }
 
 sendEl.addEventListener("click", send);

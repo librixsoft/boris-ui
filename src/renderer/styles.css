@@ -187,3 +187,12 @@ body {
 .chat-input button:hover {
   background: #1d4ed8;
 }
+
+.chat-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input button:disabled:hover {
+  background: var(--accent);
+}
