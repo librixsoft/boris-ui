@@ -1,5 +1,6 @@
 import { ipcMain, IpcMainInvokeEvent } from "electron";
 import { listTools, executeTool, Tool } from "./tools/registry";
+import { execute as executeLogSession } from "./tools/logSession";
 
 export interface LLMConfig {
   baseUrl: string;
@@ -141,6 +142,9 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
   const controller = new AbortController();
   abortControllers.set(requestId, controller);
 
+  const sessionId = "session-" + new Date().toISOString().replace(/[^0-9]/g, "-") + "Z";
+  await executeLogSession({ action: "init", sessionId, prompt: messages[messages.length - 1]?.content?.slice(0, 200) || "" });
+
   const tools = listTools();
   const systemPrompt = buildSystemPrompt(tools);
   let currentMessages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...messages];
@@ -213,7 +217,31 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             content: `[Ejecutando ${call.name}...]`
           });
 
-          const result = await executeTool(call.name, call.args);
+          const toolStart = Date.now();
+          let result: { success: boolean; path?: string; error?: string };
+          let toolError: Error | null = null;
+
+          try {
+            result = await executeTool(call.name, call.args);
+          } catch (execError) {
+            toolError = execError instanceof Error ? execError : new Error(String(execError));
+            result = { success: false, error: toolError.message };
+          }
+
+          const toolDuration = Date.now() - toolStart;
+
+          await executeLogSession({
+            action: "append",
+            sessionId,
+            entry: {
+              type: "Tool Call",
+              name: call.name,
+              input: call.args,
+              output: result.success ? { success: true, path: result.path } : { success: false, error: result.error },
+              duration: toolDuration,
+              status: result.success ? "success" : "error"
+            }
+          });
 
           sendToRenderer(event, "boris:chat:chunk", requestId, {
             content: `[Resultado ${call.name}]: ${result.success ? "OK" : result.error}`
@@ -242,6 +270,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       sendToRenderer(event, "boris:chat:done", requestId, {});
     }
   } finally {
+    await executeLogSession({ action: "close", sessionId });
     abortControllers.delete(requestId);
   }
 }
