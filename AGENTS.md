@@ -1,0 +1,1 @@
+- Usar metodologia D.R.Y.
