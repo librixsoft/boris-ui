@@ -196,3 +196,15 @@ body {
 .chat-input button:disabled:hover {
   background: var(--accent);
 }
+
+.message.user.queued .bubble {
+  background-color: #1e2732;
+  border-left: 3px solid #6c757d;
+  opacity: 0.85;
+  font-style: italic;
+  font-size: 13px;
+}
+
+.message.user.queued {
+  margin-bottom: 8px;
+}

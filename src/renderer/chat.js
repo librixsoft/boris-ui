@@ -5,6 +5,7 @@ const sendEl = document.getElementById("send");
 const chatHistory = [];
 let activeStream = null;
 let streamTimer = null;
+let messageQueue = [];
 
 function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -54,6 +55,55 @@ function setSending(isSending) {
   sendEl.disabled = isSending;
 }
 
+function appendQueuedMessage(text) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "message user queued";
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = `En cola (${messageQueue.length})...`;
+
+  wrapper.appendChild(bubble);
+  messagesEl.appendChild(wrapper);
+  scrollToBottom();
+}
+
+function updateQueueBadge() {
+  if (messageQueue.length > 0) {
+    sendEl.title = `${messageQueue.length} mensaje(s) en cola`;
+  } else {
+    sendEl.title = "";
+  }
+}
+
+function processQueue() {
+  if (activeStream) return;
+  if (messageQueue.length === 0) {
+    setSending(false);
+    updateQueueBadge();
+    return;
+  }
+  const next = messageQueue.shift();
+  updateQueueBadge();
+  appendMessage("user", next);
+  chatHistory.push({ role: "user", content: next });
+  inputEl.value = "";
+  autoResize();
+  inputEl.focus();
+  setSending(true);
+  streamResponse();
+}
+
+function clearQueue() {
+  messageQueue = [];
+  const queuedMessages = document.querySelectorAll(".message.user.queued");
+  queuedMessages.forEach(el => el.remove());
+  updateQueueBadge();
+  if (!activeStream) {
+    setSending(false);
+  }
+}
+
 function streamResponse() {
   const indicator = appendTyping();
   let streamingBubble = null;
@@ -67,13 +117,12 @@ function streamResponse() {
   streamTimer = setTimeout(() => {
     if (activeStream) {
       activeStream.stop();
-      setSending(false);
-      inputEl.focus();
       if (!streamingBubble) {
         removeTyping(indicator);
       }
       appendMessage("bot", "Tiempo de espera agotado.");
       activeStream = null;
+      processQueue();
     }
   }, 30000);
 
@@ -97,8 +146,7 @@ function streamResponse() {
       }
       chatHistory.push({ role: "assistant", content });
       activeStream = null;
-      setSending(false);
-      inputEl.focus();
+      processQueue();
     },
     onError(message) {
       clearTimeout(streamTimer);
@@ -106,15 +154,25 @@ function streamResponse() {
       removeTyping(indicator);
       appendMessage("bot", `Error: ${message}`);
       activeStream = null;
-      setSending(false);
-      inputEl.focus();
+      processQueue();
     }
   });
 }
 
 function send() {
   const text = inputEl.value.trim();
-  if (!text || activeStream) return;
+  if (!text) return;
+
+  if (activeStream) {
+    messageQueue.push(text);
+    appendQueuedMessage(text);
+    updateQueueBadge();
+    setSending(true);
+    inputEl.value = "";
+    autoResize();
+    inputEl.focus();
+    return;
+  }
 
   appendMessage("user", text);
   chatHistory.push({ role: "user", content: text });
