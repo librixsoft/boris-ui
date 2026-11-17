@@ -1,10 +1,10 @@
 :root {
-  --bg: #101418;
-  --panel: #171d23;
+  --bg: #ffffff;
+  --panel: #f4f6f9;
   --bubble-user: #2563eb;
-  --bubble-bot: #1f262e;
-  --text: #e6ebf2;
-  --text-muted: #8b96a5;
+  --bubble-bot: #f0f2f5;
+  --text: #1a1f28;
+  --text-muted: #6b7787;
   --accent: #2563eb;
   --radius: 16px;
 }
@@ -38,7 +38,7 @@ body {
   gap: 12px;
   padding: 14px 20px;
   background: var(--panel);
-  border-bottom: 1px solid #232b34;
+  border-bottom: 1px solid #e2e6ec;
   -webkit-app-region: drag;
 }
 
@@ -144,15 +144,15 @@ body {
   gap: 10px;
   padding: 14px 20px;
   background: var(--panel);
-  border-top: 1px solid #232b34;
+  border-top: 1px solid #e2e6ec;
 }
 
 .chat-input textarea {
   flex: 1;
   resize: none;
-  background: #0d1114;
+  background: #ffffff;
   color: var(--text);
-  border: 1px solid #2a333d;
+  border: 1px solid #d0d5dd;
   border-radius: 12px;
   padding: 10px 14px;
   font-size: 14px;
@@ -198,8 +198,8 @@ body {
 }
 
 .message.user.queued .bubble {
-  background-color: #1e2732;
-  border-left: 3px solid #6c757d;
+  background-color: #e8edf5;
+  border-left: 3px solid #2563eb;
   opacity: 0.85;
   font-style: italic;
   font-size: 13px;
@@ -207,4 +207,49 @@ body {
 
 .message.user.queued {
   margin-bottom: 8px;
+}
+
+.reasoning-block {
+  padding: 8px 12px;
+  background: #f4f6f9;
+  border-left: 2px solid #d0d5dd;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  border-radius: 4px;
+}
+
+.reasoning-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.reasoning-content {
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.reasoning-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-top: 4px;
+  font-family: inherit;
+}
+
+.reasoning-toggle:hover {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.reasoning-block.collapsed .reasoning-content {
+  display: none;
 }
