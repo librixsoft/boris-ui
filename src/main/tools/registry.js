@@ -18,7 +18,8 @@ for (const file of files) {
     registry.push({
       name: mod.name,
       description: mod.description,
-      schema: mod.schema
+      schema: mod.schema,
+      execute: mod.execute
     });
   }
 }
