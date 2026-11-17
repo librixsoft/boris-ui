@@ -5,6 +5,8 @@ interface ChatHandlers {
   onReasoning: (content: string) => void;
   onDone: () => void;
   onError: (message: string) => void;
+  onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
+  onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
 }
 
 interface AttachListenersResult {
@@ -41,12 +43,28 @@ function attachListeners(requestId: string, handlers: ChatHandlers): AttachListe
     ipcRenderer.off("boris:chat:reasoning", onReasoning);
     ipcRenderer.off("boris:chat:done", onDone);
     ipcRenderer.off("boris:chat:error", onError);
+    ipcRenderer.off("boris:chat:tool-call", onToolCallInner);
+    ipcRenderer.off("boris:chat:tool-result", onToolResultInner);
   }
+
+  const onToolCallInner = (_event: IpcRendererEvent, data: { requestId: string; name: string; args: Record<string, unknown> }): void => {
+    if (data.requestId === requestId && handlers.onToolCall) {
+      handlers.onToolCall({ name: data.name, args: data.args });
+    }
+  };
+
+  const onToolResultInner = (_event: IpcRendererEvent, data: { requestId: string; name: string; result: unknown; success: boolean }): void => {
+    if (data.requestId === requestId && handlers.onToolResult) {
+      handlers.onToolResult({ name: data.name, result: data.result, success: data.success });
+    }
+  };
 
   ipcRenderer.on("boris:chat:chunk", onChunk);
   ipcRenderer.on("boris:chat:reasoning", onReasoning);
   ipcRenderer.on("boris:chat:done", onDone);
   ipcRenderer.on("boris:chat:error", onError);
+  ipcRenderer.on("boris:chat:tool-call", onToolCallInner);
+  ipcRenderer.on("boris:chat:tool-result", onToolResultInner);
 
   return detach;
 }

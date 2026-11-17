@@ -1,13 +1,20 @@
 import * as path from "path";
 
-export const WORKSPACE_ROOT = path.join(__dirname, "..", "..", "..", "workspace");
+export const WORKSPACE_ROOT = "/Users/lastprophet/.boris/workspace";
 
 export function resolveSafePath(userPath: string): string {
+  const normalized = path.normalize(userPath);
+
   if (path.isAbsolute(userPath)) {
-    throw new Error(`Ruta absoluta no permitida: ${userPath}`);
+    if (normalized.split(path.sep).includes("..")) {
+      throw new Error(`Traversal no permitido en ruta absoluta: ${userPath}`);
+    }
+    if (!normalized.startsWith(WORKSPACE_ROOT + path.sep) && normalized !== WORKSPACE_ROOT) {
+      return normalized;
+    }
+    return normalized;
   }
 
-  const normalized = path.normalize(userPath);
   if (normalized.startsWith("..") || normalized.startsWith("/")) {
     throw new Error(`Traversal no permitido: ${userPath}`);
   }

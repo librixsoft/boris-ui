@@ -297,6 +297,8 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
 
       if (pendingCalls.length > 0) {
         for (const call of pendingCalls) {
+          sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args });
+
           sendToRenderer(event, "boris:chat:chunk", requestId, {
             content: `[Ejecutando ${call.name}...]`
           });
@@ -325,6 +327,13 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
               duration: toolDuration,
               status: result.success ? "success" : "error"
             }
+          });
+
+          const success = result.success !== false;
+          sendToRenderer(event, "boris:chat:tool-result", requestId, {
+            name: call.name,
+            result: success ? { path: result.path } : { error: result.error },
+            success
           });
 
           sendToRenderer(event, "boris:chat:chunk", requestId, {

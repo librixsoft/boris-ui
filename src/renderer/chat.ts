@@ -26,6 +26,8 @@ interface WindowBorisChat {
     onReasoning: (content: string) => void;
     onDone: () => void;
     onError: (message: string) => void;
+    onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
+    onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
   }): ChatStreamResult;
 }
 
@@ -47,6 +49,7 @@ let streamTimer: ReturnType<typeof setTimeout> | null = null;
 let messageQueue: string[] = [];
 let currentReasoningBlock: HTMLDivElement | null = null;
 let hasReasoning = false;
+let pendingToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 
 function scrollToBottom(): void {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -189,12 +192,92 @@ function appendReasoningToBotMessage(): HTMLDivElement {
   return block;
 }
 
+function formatArgs(args: Record<string, unknown>): string {
+  const formatted: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    const displayValue = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    formatted.push(`${key}: ${displayValue}`);
+  }
+  return formatted.join("\n");
+}
+
+function renderToolCall(name: string, args: Record<string, unknown>): void {
+  const wrapper = document.createElement("div");
+  wrapper.className = "tool-call";
+
+  const icon = document.createElement("span");
+  icon.className = "tool-icon tool-icon--running";
+  icon.textContent = "⏳";
+
+  const info = document.createElement("div");
+  info.className = "tool-info";
+
+  const nameEl = document.createElement("div");
+  nameEl.className = "tool-name";
+  nameEl.textContent = name;
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "tool-status";
+  statusEl.textContent = "Ejecutando...";
+
+  info.appendChild(nameEl);
+  info.appendChild(statusEl);
+
+  if (Object.keys(args).length > 0) {
+    const paramsEl = document.createElement("pre");
+    paramsEl.className = "tool-params";
+    paramsEl.textContent = formatArgs(args);
+    info.appendChild(paramsEl);
+  }
+
+  wrapper.appendChild(icon);
+  wrapper.appendChild(info);
+  messagesEl.appendChild(wrapper);
+  scrollToBottom();
+}
+
+function renderToolResult(name: string, result: unknown, success: boolean): void {
+  const wrapper = document.createElement("div");
+  wrapper.className = `tool-result tool-result--${success ? "success" : "error"}`;
+
+  const icon = document.createElement("span");
+  icon.className = `tool-icon tool-icon--${success ? "success" : "error"}`;
+  icon.textContent = success ? "✓" : "✗";
+
+  const info = document.createElement("div");
+  info.className = "tool-info";
+
+  const nameEl = document.createElement("div");
+  nameEl.className = "tool-name";
+  nameEl.textContent = name;
+
+  const statusEl = document.createElement("div");
+  statusEl.className = `tool-status tool-status--${success ? "success" : "error"}`;
+  statusEl.textContent = success ? "Completado" : "Error";
+
+  info.appendChild(nameEl);
+  info.appendChild(statusEl);
+
+  if (result) {
+    const outputEl = document.createElement("pre");
+    outputEl.className = "tool-output";
+    outputEl.textContent = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+    info.appendChild(outputEl);
+  }
+
+  wrapper.appendChild(icon);
+  wrapper.appendChild(info);
+  messagesEl.appendChild(wrapper);
+  scrollToBottom();
+}
+
 function streamResponse(): void {
   const indicator = appendTyping();
   let streamingBubble: HTMLDivElement | null = null;
   let content = "";
   hasReasoning = false;
   currentReasoningBlock = null;
+  pendingToolCalls = [];
 
   if (streamTimer) {
     clearTimeout(streamTimer);
@@ -234,6 +317,13 @@ function streamResponse(): void {
         reasoningContent.textContent += chunk;
         scrollToBottom();
       }
+    },
+    onToolCall(data) {
+      pendingToolCalls.push(data);
+      renderToolCall(data.name, data.args);
+    },
+    onToolResult(data) {
+      renderToolResult(data.name, data.result, data.success);
     },
     onDone() {
       if (streamTimer) {
