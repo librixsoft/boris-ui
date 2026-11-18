@@ -1,6 +1,7 @@
 import { ipcMain, IpcMainInvokeEvent } from "electron";
 import { listTools, executeTool, Tool } from "./tools/registry";
 import { execute as executeLogSession } from "./tools/logSession";
+import BrowserController from "./browser/BrowserController";
 
 export interface LLMConfig {
   baseUrl: string;
@@ -389,6 +390,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         });
 
         for (const call of pendingCalls) {
+          if (controller.signal.aborted) break;
           sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args });
 
           const toolStart = Date.now();
@@ -401,6 +403,8 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             toolError = execError instanceof Error ? execError : new Error(String(execError));
             result = { success: false, error: toolError.message };
           }
+
+          if (controller.signal.aborted) break;
 
           const toolDuration = Date.now() - toolStart;
 
@@ -459,6 +463,11 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           });
         }
 
+        if (controller.signal.aborted) {
+          sendToRenderer(event, "boris:chat:done", requestId, {});
+          return;
+        }
+
         const streamedContent = assistantContentBuffer.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
         if (streamedContent && !hasLoggedAssistantContent) {
           await executeLogSession({
@@ -496,7 +505,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       break;
     }
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
       sendToRenderer(event, "boris:chat:done", requestId, {});
     } else {
       const errorMessage = error instanceof Error ? error.message : "Error desconocido";
@@ -521,11 +530,12 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
   }
 }
 
-function abortChatCompletion(_event: IpcMainInvokeEvent, payload: { requestId: string }): void {
+async function abortChatCompletion(_event: IpcMainInvokeEvent, payload: { requestId: string }): Promise<void> {
   const controller = abortControllers.get(payload.requestId);
   if (controller) {
     controller.abort();
   }
+  await BrowserController.stop();
 }
 
 export function registerLlmIpc(): void {
