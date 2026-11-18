@@ -8,6 +8,7 @@ type BrowserAction =
   | "mouseMove"
   | "mouseClick"
   | "mouseDoubleClick"
+  | "mouseWheel"
   | "type"
   | "pressKey"
   | "pressKeyHuman"
@@ -21,6 +22,9 @@ interface BrowserParams {
   url?: string;
   value?: string;
   key?: string;
+  text?: string;
+  placeholder?: string;
+  deltaY?: number;
   x?: number;
   y?: number;
   human?: boolean;
@@ -48,6 +52,7 @@ const tool: Tool = {
           "mouseMove",
           "mouseClick",
           "mouseDoubleClick",
+          "mouseWheel",
           "type",
           "pressKey",
           "pressKeyHuman",
@@ -69,6 +74,18 @@ const tool: Tool = {
       key: {
         type: "string",
         description: "Tecla a presionar (requerido para action pressKey o pressKeyHuman). Ej: Enter, Tab, Escape, Backspace"
+      },
+      text: {
+        type: "string",
+        description: "Texto visual a localizar en pantalla para findCoordinates (ej: 'Buscar', 'Crear publicación')"
+      },
+      placeholder: {
+        type: "string",
+        description: "Placeholder o etiqueta a buscar para findCoordinates (ej: 'Buscar')"
+      },
+      deltaY: {
+        type: "number",
+        description: "Píxeles verticales para mouseWheel (positivo abajo, negativo arriba)"
       },
       x: {
         type: "number",
@@ -99,6 +116,7 @@ const tool: Tool = {
     screenshot?: string;
     title?: string;
     key?: string;
+    found?: boolean;
     x?: number;
     y?: number;
   }> {
@@ -115,15 +133,25 @@ const tool: Tool = {
         return await BrowserController.screenshot();
       }
       case "findCoordinates": {
-        if (!params.targetColor) {
-          throw new Error("action findCoordinates requiere targetColor");
+        if (!params.text && !params.placeholder && !params.targetColor) {
+          throw new Error("action findCoordinates requiere text, placeholder o targetColor");
         }
-        const ss = await BrowserController.screenshot();
-        const coords = await BrowserController.findCoordinatesFromScreenshot(ss.screenshot!, params.targetColor as string);
+        const coords = await BrowserController.findVisualCoordinates({
+          text: params.text as string | undefined,
+          placeholder: params.placeholder as string | undefined,
+          targetColor: params.targetColor as string | undefined
+        });
         if (!coords) {
-          return { success: false, error: "Color no encontrado en la captura" };
+          return {
+            success: false,
+            found: false,
+            error: `Elemento visual no encontrado en pantalla: "${params.text || params.placeholder || params.targetColor}"`
+          };
         }
-        return { success: true, x: coords.x, y: coords.y };
+        return { success: true, found: true, x: coords.x, y: coords.y };
+      }
+      case "mouseWheel": {
+        return await BrowserController.mouseWheel(typeof params.deltaY === "number" ? params.deltaY : 300);
       }
       case "mouseMove": {
         if (typeof params.x !== "number" || typeof params.y !== "number") {

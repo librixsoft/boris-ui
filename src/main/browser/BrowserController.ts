@@ -8,6 +8,7 @@ export interface BrowserResult {
   screenshot?: string;
   title?: string;
   key?: string;
+  found?: boolean;
   x?: number;
   y?: number;
   error?: string;
@@ -207,6 +208,62 @@ class BrowserController {
       },
       { base64: base64Screenshot, targetHex: targetColorHex, tol: tolerance }
     );
+  }
+
+  async mouseWheel(deltaY: number = 300): Promise<BrowserResult> {
+    await this.ensurePage();
+    await this.page!.mouse.wheel(0, deltaY);
+    await this.page!.waitForTimeout(200);
+    return { success: true };
+  }
+
+  async findVisualCoordinates(query: { text?: string; placeholder?: string; targetColor?: string }): Promise<{ x: number; y: number } | null> {
+    await this.ensurePage();
+
+    if (query.targetColor) {
+      const ss = await this.screenshot();
+      return await this.findCoordinatesFromScreenshot(ss.screenshot!, query.targetColor);
+    }
+
+    const searchText = (query.text || query.placeholder || "").trim().toLowerCase();
+    if (!searchText) return null;
+
+    return await this.page!.evaluate((term) => {
+      // 1. Buscar en inputs / textareas por placeholder, value o aria-label
+      const inputs = Array.from(document.querySelectorAll("input, textarea, [contenteditable='true']"));
+      for (const input of inputs) {
+        const ph = (input.getAttribute("placeholder") || "").toLowerCase();
+        const aria = (input.getAttribute("aria-label") || "").toLowerCase();
+        const val = ((input as HTMLInputElement).value || "").toLowerCase();
+        if (ph.includes(term) || aria.includes(term) || val.includes(term)) {
+          const rect = input.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            return {
+              x: Math.round(rect.left + rect.width / 2),
+              y: Math.round(rect.top + rect.height / 2)
+            };
+          }
+        }
+      }
+
+      // 2. Buscar en botones o elementos interactivos por texto visible o aria-label
+      const interactives = Array.from(document.querySelectorAll("button, a, div, span, p, h1, h2, h3"));
+      for (const el of interactives) {
+        const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+        const text = (el.textContent || "").toLowerCase().trim();
+        if (aria === term || text === term || (text.includes(term) && text.length < 60)) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            return {
+              x: Math.round(rect.left + rect.width / 2),
+              y: Math.round(rect.top + rect.height / 2)
+            };
+          }
+        }
+      }
+
+      return null;
+    }, searchText);
   }
 
   async pressKey(key: string): Promise<BrowserResult> {

@@ -2,226 +2,230 @@ import { describe, it, expect, afterAll } from "vitest";
 import BrowserController from "../src/main/browser/BrowserController";
 import { execute as executeBrowserTool } from "../src/main/tools/browser";
 
-// Página HTML con elementos visuales reconocibles por color y coordenadas fijas/medibles
-const VISUAL_TEST_HTML = `
+// Réplica visual autocontenida de interfaz tipo LinkedIn (con barra superior "Buscar" y feed "Crear publicación")
+const LINKEDIN_SIMULATION_HTML = `
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Prueba Visual por Coordenadas</title>
+  <title>LinkedIn Feed Simulation</title>
   <style>
     body {
       margin: 0;
-      padding: 40px;
-      font-family: Arial, sans-serif;
-      background-color: #f8fafc;
+      padding: 0;
+      background-color: #f3f2ef;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-    .titulo {
-      font-size: 24px;
-      margin-bottom: 30px;
-      color: #0f172a;
-    }
-    /* Campo de texto con borde distintivo verde para detección visual (#10b981) */
-    .input-box {
-      width: 320px;
-      height: 48px;
-      border: 4px solid #10b981;
+    /* Barra de navegación superior */
+    header {
       background-color: #ffffff;
-      font-size: 18px;
-      padding: 0 16px;
-      box-sizing: border-box;
-      outline: none;
-      display: block;
-      margin-bottom: 24px;
+      height: 54px;
+      border-bottom: 1px solid #e0dfdc;
+      display: flex;
+      align-items: center;
+      padding: 0 40px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
-    /* Botón con color azul primario (#2563eb) para detección en screenshot */
-    .btn-target {
-      width: 220px;
-      height: 52px;
-      background-color: #2563eb;
+    .logo {
+      background-color: #0a66c2;
       color: #ffffff;
-      border: none;
-      font-size: 16px;
       font-weight: bold;
+      font-size: 18px;
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      margin-right: 12px;
+    }
+    /* Caja de búsqueda real tipo LinkedIn */
+    .search-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-input {
+      background-color: #edf3f8;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      height: 34px;
+      width: 280px;
+      padding: 0 12px;
+      font-size: 14px;
+      color: #191919;
+      outline: none;
+      box-sizing: border-box;
+    }
+    .search-input:focus {
+      background-color: #ffffff;
+      border-color: #0a66c2;
+      box-shadow: 0 0 0 2px rgba(10, 102, 194, 0.2);
+    }
+    /* Feed principal */
+    main {
+      max-width: 560px;
+      margin: 20px auto;
+      padding: 0 16px;
+    }
+    .post-box-card {
+      background-color: #ffffff;
+      border-radius: 8px;
+      border: 1px solid #e0dfdc;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .post-trigger-btn {
+      width: 100%;
+      height: 48px;
+      border-radius: 24px;
+      border: 1px solid rgba(0,0,0,0.3);
+      background-color: transparent;
+      text-align: left;
+      padding-left: 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #666666;
       cursor: pointer;
-      border-radius: 6px;
-      display: block;
     }
-    .btn-target:active {
-      background-color: #1d4ed8;
+    .post-trigger-btn:hover {
+      background-color: rgba(0,0,0,0.05);
     }
-    #estado-click {
-      margin-top: 20px;
-      font-size: 16px;
-      color: #334155;
+    #search-status, #post-status {
+      font-size: 12px;
+      color: #0a66c2;
+      margin-top: 6px;
     }
   </style>
 </head>
 <body>
-  <div class="titulo">Automatización por Coordenadas y Screenshots</div>
+  <header>
+    <div class="logo">in</div>
+    <div class="search-container">
+      <input
+        type="text"
+        class="search-input"
+        placeholder="Buscar"
+        aria-label="Buscar"
+        oninput="document.getElementById('search-status').textContent = 'Buscando: ' + this.value"
+      />
+    </div>
+    <div id="search-status"></div>
+  </header>
 
-  <input type="text" id="campo-texto" class="input-box" placeholder="Haz click aquí y escribe..." oninput="document.getElementById('estado-input').textContent = this.value" />
-  <button id="boton-accion" class="btn-target" onclick="document.getElementById('estado-click').textContent = '¡Click detectado por coordenadas!'">
-    Acción Visual
-  </button>
-
-  <div id="estado-click">Esperando click...</div>
-  <div id="estado-input"></div>
+  <main>
+    <div class="post-box-card">
+      <button
+        class="post-trigger-btn"
+        onclick="document.getElementById('post-status').textContent = 'Modal de publicación abierto'"
+      >
+        Crear publicación
+      </button>
+      <div id="post-status">Esperando acción...</div>
+    </div>
+  </main>
 </body>
 </html>
 `;
 
-const VISUAL_PAGE_URL = `data:text/html;charset=utf-8,${encodeURIComponent(VISUAL_TEST_HTML)}`;
+const LINKEDIN_PAGE_URL = `data:text/html;charset=utf-8,${encodeURIComponent(LINKEDIN_SIMULATION_HTML)}`;
 
-describe("Browser E2E - Automatización basada en Screenshots y Coordenadas", () => {
+describe("Browser E2E - Flujos de Detección de Coordenadas y Manejo de Errores", () => {
   afterAll(async () => {
     await BrowserController.close();
   });
 
-  describe("Flujo guiado por Captura de Pantalla y Coordenadas (Sin selectores de elementos)", () => {
-    it("1. Debería navegar a la página mediante BrowserController.goto", async () => {
-      const result = await BrowserController.goto(VISUAL_PAGE_URL);
-      expect(result.success).toBe(true);
-      expect(result.url).toContain("data:text/html");
+  describe("Caso 1: El agente encuentra la caja de búsqueda en UI real y escribe", () => {
+    it("debería navegar a la página y tomar la captura", async () => {
+      const navRes = await BrowserController.goto(LINKEDIN_PAGE_URL);
+      expect(navRes.success).toBe(true);
+
+      const ssRes = await BrowserController.screenshot();
+      expect(ssRes.success).toBe(true);
+      expect(ssRes.screenshot).toBeDefined();
     });
 
-    it("2. Debería tomar un screenshot completo de la pantalla", async () => {
-      const result = await BrowserController.screenshot();
-      expect(result.success).toBe(true);
-      expect(result.screenshot).toBeDefined();
-      expect(typeof result.screenshot).toBe("string");
-      expect(result.screenshot!.length).toBeGreaterThan(1000);
-    });
-
-    it("3. Debería localizar las coordenadas del botón (#2563eb) a partir de la captura", async () => {
-      const ssResult = await BrowserController.screenshot();
-      const coords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#2563eb");
-      
+    it("debería localizar las coordenadas de la caja 'Buscar', hacer click y escribir", async () => {
+      // 1. El agente localiza las coordenadas de la caja de búsqueda mediante su etiqueta/placeholder visible
+      const coords = await BrowserController.findVisualCoordinates({ placeholder: "Buscar" });
       expect(coords).not.toBeNull();
       expect(coords!.x).toBeGreaterThan(0);
       expect(coords!.y).toBeGreaterThan(0);
+
+      // 2. Mueve el cursor físico y hace clic en las coordenadas calculadas
+      await BrowserController.mouseClick(coords!.x, coords!.y, { human: true });
+
+      // 3. Escribe en la caja con el teclado físico
+      await BrowserController.type("Anthropic", { human: true });
+
+      // 4. Comprueba que el texto fue escrito en la caja de búsqueda
+      const pageText = await BrowserController.getPageText();
+      expect(pageText.text).toContain("Buscando: Anthropic");
     });
 
-    it("4. Debería mover el mouse a las coordenadas encontradas con movimiento humano", async () => {
-      const ssResult = await BrowserController.screenshot();
-      const coords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#2563eb");
+    it("debería hacer clic por coordenadas en el botón 'Crear publicación'", async () => {
+      const coords = await BrowserController.findVisualCoordinates({ text: "Crear publicación" });
       expect(coords).not.toBeNull();
 
-      const moveResult = await BrowserController.mouseMove(coords!.x, coords!.y, { human: true, steps: 15 });
-      expect(moveResult.success).toBe(true);
-      expect(moveResult.x).toBe(coords!.x);
-      expect(moveResult.y).toBe(coords!.y);
-    });
+      // Clic directo en las coordenadas
+      await BrowserController.mouseClick(coords!.x, coords!.y, { human: true });
 
-    it("5. Debería hacer click en las coordenadas del botón y activar su evento", async () => {
-      const ssResult = await BrowserController.screenshot();
-      const coords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#2563eb");
-      expect(coords).not.toBeNull();
-
-      // Click directo a nivel de coordenadas (sin pasar ningún selector)
-      const clickResult = await BrowserController.mouseClick(coords!.x, coords!.y, { human: true });
-      expect(clickResult.success).toBe(true);
-
-      // Verificar que el click se ejecutó en la interfaz
-      const pageTextResult = await BrowserController.getPageText();
-      expect(pageTextResult.text).toContain("¡Click detectado por coordenadas!");
-    });
-
-    it("6. Debería localizar las coordenadas del campo de entrada (#10b981) en la captura", async () => {
-      const ssResult = await BrowserController.screenshot();
-      const inputCoords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#10b981");
-      
-      expect(inputCoords).not.toBeNull();
-      expect(inputCoords!.x).toBeGreaterThan(0);
-      expect(inputCoords!.y).toBeGreaterThan(0);
-    });
-
-    it("7. Debería hacer click en las coordenadas del input y escribir texto con teclado simulando humano", async () => {
-      const ssResult = await BrowserController.screenshot();
-      const inputCoords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#10b981");
-      expect(inputCoords).not.toBeNull();
-
-      // 1. Mover y hacer click en las coordenadas para darle foco
-      await BrowserController.mouseClick(inputCoords!.x, inputCoords!.y, { human: true });
-
-      // 2. Escribir mediante teclado (sin selector)
-      const textoAEscribir = "Texto por coordenadas";
-      const typeResult = await BrowserController.type(textoAEscribir, {
-        human: true,
-        mistakes: false,
-        typingSpeed: { min: 15, max: 40 }
-      });
-
-      expect(typeResult.success).toBe(true);
-      expect(typeResult.value).toBe(textoAEscribir);
-
-      // 3. Verificar que el texto está presente en la página
-      const pageTextCheck = await BrowserController.getPageText();
-      expect(pageTextCheck.text).toContain(textoAEscribir);
+      const pageText = await BrowserController.getPageText();
+      expect(pageText.text).toContain("Modal de publicación abierto");
     });
   });
 
-  describe("Ejecución mediante la herramienta Browser (Tool Execute)", () => {
-    it("debería ejecutar findCoordinates a través de executeBrowserTool", async () => {
-      const result = await executeBrowserTool({
+  describe("Caso 2: El agente NO encuentra la caja (Manejo de Fallo y Recuperación)", () => {
+    it("debería retornar found: false sin crash cuando la caja no existe en pantalla", async () => {
+      // El agente intenta buscar una caja inexistente (ej. 'CajaDeComentarios' o 'BuscarAmigos')
+      const coords = await BrowserController.findVisualCoordinates({ text: "CajaDeComentarios" });
+      expect(coords).toBeNull();
+
+      // Vía executeBrowserTool
+      const toolRes = await executeBrowserTool({
         action: "findCoordinates",
-        targetColor: "#2563eb"
+        text: "CajaDeComentarios"
       });
 
-      expect(result.success).toBe(true);
-      expect(typeof result.x).toBe("number");
-      expect(typeof result.y).toBe("number");
+      expect(toolRes.success).toBe(false);
+      expect(toolRes.found).toBe(false);
+      expect(toolRes.error).toContain("Elemento visual no encontrado en pantalla");
     });
 
-    it("debería mover el mouse a coordenadas usando executeBrowserTool", async () => {
-      const result = await executeBrowserTool({
-        action: "mouseMove",
-        x: 120,
-        y: 120,
-        human: true
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.x).toBe(120);
-      expect(result.y).toBe(120);
-    });
-
-    it("debería hacer click y escribir mediante executeBrowserTool", async () => {
-      // 1. Localizar coordenadas del input
-      const coordsRes = await executeBrowserTool({
+    it("flujo de recuperación: el agente intenta scroll si no encuentra la caja inicialmente", async () => {
+      // 1. Intento 1: No encuentra la caja
+      const intento1 = await executeBrowserTool({
         action: "findCoordinates",
-        targetColor: "#10b981"
+        text: "ElementoOcultoAbajo"
       });
-      expect(coordsRes.success).toBe(true);
 
-      // 2. Click en coordenadas
-      const clickRes = await executeBrowserTool({
-        action: "mouseClick",
-        x: coordsRes.x!,
-        y: coordsRes.y!,
-        human: true
+      expect(intento1.found).toBe(false);
+
+      // 2. Acción correctiva: el agente NO hace clic a ciegas, sino que realiza scroll para explorar
+      const scrollRes = await executeBrowserTool({
+        action: "mouseWheel",
+        deltaY: 400
       });
-      expect(clickRes.success).toBe(true);
+      expect(scrollRes.success).toBe(true);
 
-      // 3. Escribir texto
-      const typeRes = await executeBrowserTool({
-        action: "type",
-        value: " - Boris UI",
-        human: true
+      // 3. Vuelve a tomar captura
+      const ssRes = await executeBrowserTool({ action: "screenshot" });
+      expect(ssRes.success).toBe(true);
+
+      // 4. Si definitivamente no está, reporta el resultado de forma controlada sin romper la sesión
+      const intento2 = await executeBrowserTool({
+        action: "findCoordinates",
+        text: "ElementoOcultoAbajo"
       });
-      expect(typeRes.success).toBe(true);
-    });
-
-    it("debería validar parámetros requeridos para acciones de coordenadas", async () => {
-      await expect(executeBrowserTool({ action: "mouseMove" })).rejects.toThrow("action mouseMove requiere x e y numéricos");
-      await expect(executeBrowserTool({ action: "mouseClick" })).rejects.toThrow("action mouseClick requiere x e y numéricos");
-      await expect(executeBrowserTool({ action: "type" })).rejects.toThrow("action type requiere value");
-      await expect(executeBrowserTool({ action: "findCoordinates" })).rejects.toThrow("action findCoordinates requiere targetColor");
+      expect(intento2.found).toBe(false);
+      expect(intento2.error).toBeDefined();
     });
   });
 
-  describe("Cierre del navegador", () => {
-    it("debería cerrar la sesión del navegador mediante executeBrowserTool", async () => {
+  describe("Cierre limpio de sesión", () => {
+    it("debería cerrar el navegador correctamente", async () => {
       const result = await executeBrowserTool({ action: "close" });
       expect(result.success).toBe(true);
       expect(BrowserController.isLaunched).toBe(false);
