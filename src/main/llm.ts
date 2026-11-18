@@ -7,9 +7,20 @@ export interface LLMConfig {
   model: string;
 }
 
+export interface NativeToolCallFormat {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_calls?: NativeToolCallFormat[];
+  tool_call_id?: string;
 }
 
 export interface ChatPayload {
@@ -28,6 +39,14 @@ export interface SSEChoice {
   delta: {
     content?: string;
     reasoning_content?: string;
+    tool_calls?: Array<{
+      index: number;
+      id?: string;
+      function?: {
+        name?: string;
+        arguments?: string;
+      };
+    }>;
   };
 }
 
@@ -41,6 +60,7 @@ export interface SSEResponse {
 export interface ToolCall {
   name: string;
   args: Record<string, unknown>;
+  id?: string;
 }
 
 export interface StreamHandlers {
@@ -74,15 +94,30 @@ Schema JSON: ${JSON.stringify(t.schema, null, 2)}
 
   return `Sos Boris, un asistente conversacional en español. Respondé de forma clara y concisa.
 
-Cuando necesites realizar una operación en el sistema de archivos, emití un bloque <tool> con el nombre de la herramienta y los parámetros JSON. Ejemplo:
-<tool name="createFile">{ "path": "notas.txt", "content": "Hola" }</tool>
-
-Esperá el resultado antes de continuar. Podés encadenar múltiples tool calls.
+Cuando necesites realizar una operación, usá tool calling nativo: las herramientas se declaran vía la API y el sistema ejecuta las llamadas que emitas. Esperá el resultado antes de continuar. Podés encadenar múltiples tool calls.
 
 Después de ejecutar herramientas, confirmá al usuario lo que se hizo y terminá. No generes razonamiento adicional tras recibir el resultado de una herramienta.
 
 Herramientas disponibles:
 ${toolInstructions}`;
+}
+
+function buildToolsParam(tools: Tool[]): Array<{
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: object;
+  };
+}> {
+  return tools.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.schema
+    }
+  }));
 }
 
 function sendToRenderer(event: IpcMainInvokeEvent, channel: string, requestId: string, extra: Record<string, unknown>): void {
@@ -91,7 +126,17 @@ function sendToRenderer(event: IpcMainInvokeEvent, channel: string, requestId: s
   }
 }
 
-function parseSseLine(line: string): { type: "done" | "error" | "content" | "reasoning"; content?: string; message?: string } | null {
+type SseLineResult =
+  | { type: "done" }
+  | { type: "error"; message: string }
+  | { type: "content"; content: string }
+  | { type: "reasoning"; content: string }
+  | {
+      type: "tool_call";
+      toolCall: { index: number; id?: string; name?: string; arguments?: string };
+    };
+
+function parseSseLine(line: string): SseLineResult | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith("data:")) return null;
 
@@ -115,6 +160,20 @@ function parseSseLine(line: string): { type: "done" | "error" | "content" | "rea
       return { type: "reasoning", content: reasoning };
     }
 
+    const toolCallDeltas = choice.delta.tool_calls;
+    if (toolCallDeltas && toolCallDeltas.length > 0) {
+      const first = toolCallDeltas[0];
+      return {
+        type: "tool_call",
+        toolCall: {
+          index: first.index,
+          id: first.id,
+          name: first.function?.name,
+          arguments: first.function?.arguments
+        }
+      };
+    }
+
     const content = choice.delta.content;
     if (content) {
       return { type: "content", content };
@@ -127,20 +186,7 @@ function parseSseLine(line: string): { type: "done" | "error" | "content" | "rea
   return null;
 }
 
-function collectToolCalls(rawBuffer: string): ToolCall[] {
-  const toolRegex = /<tool\s+name="([^"]+)">([\s\S]*?)(?:<\/tool>|(?=<tool\s+name=|$))/g;
-  const toolCalls: ToolCall[] = [];
-  let match: RegExpExecArray | null;
-
-  while ((match = toolRegex.exec(rawBuffer)) !== null) {
-    toolCalls.push({
-      name: match[1],
-      args: JSON.parse(match[2]) as Record<string, unknown>
-    });
-  }
-
-  return toolCalls;
-}
+const MANUAL_TOOL_TAG_REGEX = /<tool\s+name=/;
 
 function extractCleanText(rawBuffer: string): string {
   return rawBuffer
@@ -204,6 +250,8 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         body: JSON.stringify({
           model: LLM_CONFIG.model,
           messages: currentMessages,
+          tools: buildToolsParam(tools),
+          tool_choice: "auto",
           stream: true
         }),
         signal: controller.signal
@@ -224,6 +272,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       let reasoningBuffer = "";
       let finished = false;
       let rawOffset = 0;
+      const nativeCallsMap = new Map<number, { id: string; name: string; args: string }>();
       let pendingCalls: ToolCall[] = [];
       let postToolCallIterations = 0;
       let hasReasoning = false;
@@ -247,6 +296,13 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             finished = true;
           } else if (result.type === "error") {
             throw new Error(result.message!);
+          } else if (result.type === "tool_call") {
+            const { index, id, name, arguments: argumentsDelta } = result.toolCall;
+            const existing = nativeCallsMap.get(index) || { id: "", name: "", args: "" };
+            if (id) existing.id = id;
+            if (name) existing.name = name;
+            if (argumentsDelta) existing.args += argumentsDelta;
+            nativeCallsMap.set(index, existing);
           } else if (result.type === "reasoning") {
             hasReasoning = true;
             reasoningBuffer += result.content!;
@@ -299,14 +355,38 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         }
       }
 
-      const finalCalls = collectToolCalls(rawBuffer);
-      pendingCalls.push(...finalCalls);
+      const nativeCalls: ToolCall[] = Array.from(nativeCallsMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([, acc]) => ({
+          id: acc.id,
+          name: acc.name,
+          args: JSON.parse(acc.args || "{}") as Record<string, unknown>
+        }));
+
+      if (nativeCalls.length === 0 && MANUAL_TOOL_TAG_REGEX.test(rawBuffer)) {
+        throw new Error("El modelo emitió tool calls en formato texto. El tool calling manual está deshabilitado: solo se permite tool calling nativo.");
+      }
+
+      pendingCalls = nativeCalls;
 
       if (pendingCalls.length > 0) {
         postToolCallIterations++;
         if (postToolCallIterations >= 3) {
           break;
         }
+
+        currentMessages.push({
+          role: "assistant",
+          content: assistantContentBuffer.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim(),
+          tool_calls: pendingCalls.map((call) => ({
+            id: call.id!,
+            type: "function" as const,
+            function: {
+              name: call.name,
+              arguments: JSON.stringify(call.args)
+            }
+          }))
+        });
 
         for (const call of pendingCalls) {
           sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args });
@@ -373,8 +453,9 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           });
 
           currentMessages.push({
-            role: "user",
-            content: `Resultado de ${call.name}: ${JSON.stringify(call.name === "browser" ? toolResultPayload : result)}`
+            role: "tool",
+            tool_call_id: call.id!,
+            content: JSON.stringify(call.name === "browser" ? toolResultPayload : result)
           });
         }
 
