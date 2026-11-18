@@ -5,13 +5,16 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc && tsc -p tsconfig.renderer.json && cp -r src/renderer/*.html src/renderer/*.css dist/renderer/",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "test": "vitest"
   },
   "devDependencies": {
     "@types/electron": "^1.4.38",
     "@types/node": "^26.6.6",
+    "@vitest/ui": "^5.1.0",
     "electron": "^33.4.11",
     "playwright": "^1.65.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   }
 }

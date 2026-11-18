@@ -5,17 +5,17 @@ import { Tool } from "./registry";
 
 const tool: Tool = {
   name: "moveFolder",
-  description: "Mueve un archivo o carpeta a una nueva ubicación en el workspace.",
+  description: "Mueve un archivo o carpeta a una nueva ubicación. Acepta rutas relativas al workspace o rutas absolutas.",
   schema: {
     type: "object",
     properties: {
       from: {
         type: "string",
-        description: "Ruta relativa origen del archivo o carpeta"
+        description: "Ruta origen del archivo o carpeta (relativa al workspace o absoluta)"
       },
       to: {
         type: "string",
-        description: "Ruta relativa destino del archivo o carpeta"
+        description: "Ruta destino del archivo o carpeta (relativa al workspace o absoluta). Para rutas absolutas, especifica la ruta completa"
       }
     },
     required: ["from", "to"],

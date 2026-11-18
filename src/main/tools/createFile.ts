@@ -5,13 +5,13 @@ import { Tool } from "./registry";
 
 const tool: Tool = {
   name: "createFile",
-  description: "Crea un archivo en el workspace. Crea carpetas intermedias si es necesario.",
+  description: "Crea un archivo. Crea carpetas intermedias si es necesario. Acepta rutas relativas al workspace o rutas absolutas.",
   schema: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "Ruta relativa al workspace donde crear el archivo"
+        description: "Ruta del archivo (relativa al workspace o absoluta). Para rutas absolutas, especifica la ruta completa (ej: /Users/lastprophet/Downloads/archivo.txt)"
       },
       content: {
         type: "string",

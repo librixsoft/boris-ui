@@ -5,13 +5,13 @@ import { Tool } from "./registry";
 
 const tool: Tool = {
   name: "deleteFile",
-  description: "Elimina un archivo del workspace.",
+  description: "Elimina un archivo. Acepta rutas relativas al workspace o rutas absolutas.",
   schema: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "Ruta relativa al workspace del archivo a eliminar"
+        description: "Ruta del archivo a eliminar (relativa al workspace o absoluta). Para rutas absolutas, especifica la ruta completa (ej: /Users/lastprophet/Downloads/archivo.txt)"
       }
     },
     required: ["path"],

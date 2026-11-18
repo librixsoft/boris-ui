@@ -5,17 +5,17 @@ import { Tool } from "./registry";
 
 const tool: Tool = {
   name: "renamePath",
-  description: "Renombra un archivo o carpeta dentro del workspace.",
+  description: "Renombra un archivo o carpeta. Acepta rutas relativas al workspace o rutas absolutas.",
   schema: {
     type: "object",
     properties: {
       from: {
         type: "string",
-        description: "Ruta relativa actual del archivo o carpeta"
+        description: "Ruta actual del archivo o carpeta (relativa al workspace o absoluta)"
       },
       to: {
         type: "string",
-        description: "Nueva ruta relativa del archivo o carpeta"
+        description: "Nueva ruta del archivo o carpeta (relativa al workspace o absoluta). Para rutas absolutas, especifica la ruta completa"
       }
     },
     required: ["from", "to"],
