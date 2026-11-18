@@ -28,7 +28,6 @@ interface WindowBorisChat {
     onError: (message: string) => void;
     onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
     onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
-    onBrowserStop?: () => void;
   }, sessionId?: string): ChatStreamResult;
 }
 
@@ -111,7 +110,7 @@ function setBrowserControlActive(active: boolean): void {
   browserControlOverlay.hidden = !active;
   if (active) {
     browserStopEl.disabled = false;
-    browserStopEl.innerHTML = "<span aria-hidden=\"true\">■</span><span>Stop</span>";
+    browserStopEl.setAttribute("aria-label", "Detener el agente");
   }
   inputEl.disabled = active;
   sendEl.disabled = active || Boolean(activeStream);
@@ -451,9 +450,6 @@ function streamResponse(): void {
         setBrowserControlActive(false);
       }
     },
-    onBrowserStop() {
-      markBrowserStopRequested();
-    },
     onDone() {
       if (streamTimer) {
         clearTimeout(streamTimer);
@@ -493,7 +489,7 @@ function markBrowserStopRequested(): void {
   if (browserStopRequested) return;
   browserStopRequested = true;
   browserStopEl.disabled = true;
-  browserStopEl.innerHTML = "<span>Deteniendo...</span>";
+  browserStopEl.setAttribute("aria-label", "Deteniendo...");
   clearQueue();
 }
 
