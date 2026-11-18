@@ -338,13 +338,13 @@ class BrowserController {
       if (!result.visible) {
         return { found: false, closest: { text: result.text, x: result.x, y: result.y }, hint: `Elemento existe pero fuera de pantalla. Usa scrollToText("${query.text}")` };
       }
-      return { x: result.x, y: result.y, found: true };
+      return { x: result.x, y: result.y };
     }
 
     // 3. Verificar si el texto existe en el DOM
     const inDom = await this.page!.evaluate((term) =>
       (document.body?.textContent ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(term)
-    );
+    , term);
 
     if (inDom) {
       return { found: false, hint: `El texto existe en el DOM pero no es interactivo/visible aquí. Usa pageText o scrollToText` };
@@ -378,10 +378,11 @@ class BrowserController {
     const links = await this.page!.evaluate((limit) => {
       const out: Array<{ href: string; text: string; x: number; y: number; visible: boolean }> = [];
       for (const a of Array.from(document.querySelectorAll("a[href]"))) {
-        const r = a.getBoundingClientRect();
+        const anchor = a as HTMLAnchorElement;
+        const r = anchor.getBoundingClientRect();
         const visible = r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0;
         if (!visible) continue;
-        out.push({ href: a.href, text: a.textContent.trim().slice(0, 120), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), visible });
+        out.push({ href: anchor.href, text: anchor.textContent.trim().slice(0, 120), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), visible });
         if (out.length >= limit) break;
       }
       return out;
@@ -393,7 +394,7 @@ class BrowserController {
     await this.ensurePage();
     const el = await this.page!.evaluate(({ x, y }) => {
       const node = document.elementFromPoint(x, y) as HTMLElement;
-      const a = node?.closest("a[href]") ?? null;
+      const a = (node?.closest("a[href]") ?? null) as HTMLAnchorElement | null;
       return {
         tag: node?.tagName.toLowerCase() ?? "none",
         text: (node?.textContent ?? "").trim().slice(0, 120),
@@ -480,7 +481,7 @@ class BrowserController {
       }
       return results;
     }, { term: text, maxLimit: limit });
-    return { success: true, elements: bodyText };
+    return { success: true, value: JSON.stringify(bodyText) };
   }
 
   private async isInViewport(coords: { x: number; y: number }): Promise<boolean> {

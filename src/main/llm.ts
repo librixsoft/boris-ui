@@ -19,7 +19,7 @@ export interface NativeToolCallFormat {
 export interface ChatContentPart {
   type: "text" | "image_url";
   text?: string;
-  image_url?: { data_uri: string };
+  image_url?: { url: string };
 }
 
 export interface ChatMessage {
@@ -502,7 +502,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
                   },
                   {
                     type: "image_url" as const,
-                    image_url: { data_uri: `data:image/png;base64,${browserResult.screenshot}` },
+                    image_url: { url: `data:image/png;base64,${browserResult.screenshot}` },
                   },
                 ]
               });
