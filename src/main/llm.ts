@@ -128,7 +128,7 @@ function parseSseLine(line: string): { type: "done" | "error" | "content" | "rea
 }
 
 function collectToolCalls(rawBuffer: string): ToolCall[] {
-  const toolRegex = /<tool\s+name="([^"]+)">([\s\S]*?)<\/tool>/g;
+  const toolRegex = /<tool\s+name="([^"]+)">([\s\S]*?)(?:<\/tool>|(?=<tool\s+name=|$))/g;
   const toolCalls: ToolCall[] = [];
   let match: RegExpExecArray | null;
 
@@ -143,7 +143,11 @@ function collectToolCalls(rawBuffer: string): ToolCall[] {
 }
 
 function extractCleanText(rawBuffer: string): string {
-  return rawBuffer.replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "").trim();
+  return rawBuffer
+    .replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "")
+    .replace(/<tool\s+name="[^"]*">[\s\S]*?(?=<tool\s+name=|$)/g, "")
+    .replace(/<\/tool>/g, "")
+    .trim();
 }
 
 const THINKING_TAG_REGEX = /<\/?thinking\s*\/?>|<\/?reasoning\s*\/?>/gi;
