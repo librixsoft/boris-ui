@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import * as path from "path";
 import { registerLlmIpc } from "./llm";
 import { registerToolsIpc } from "./tools/handler";
+import BrowserStopOverlay from "./browser/BrowserStopOverlay";
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -21,7 +22,15 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  registerLlmIpc();
+  registerLlmIpc({
+    onBrowserControlChange: (active) => {
+      if (active) {
+        BrowserStopOverlay.show();
+      } else {
+        BrowserStopOverlay.hide();
+      }
+    }
+  });
   registerToolsIpc(ipcMain);
   createWindow();
 

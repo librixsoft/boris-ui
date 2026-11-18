@@ -81,6 +81,9 @@ const LLM_CONFIG: LLMConfig = {
 };
 
 const abortControllers = new Map<string, AbortController>();
+let activeBrowserRequestId: string | null = null;
+let activeBrowserSender: IpcMainInvokeEvent["sender"] | null = null;
+let onBrowserControlChange: (active: boolean) => void = () => {};
 
 function buildSystemPrompt(tools: Tool[]): string {
   const toolInstructions = tools
@@ -392,6 +395,11 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         for (const call of pendingCalls) {
           if (controller.signal.aborted) break;
           sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args });
+          if (call.name === "browser") {
+            activeBrowserRequestId = requestId;
+            activeBrowserSender = event.sender;
+            onBrowserControlChange(true);
+          }
 
           const toolStart = Date.now();
           let result: { success: boolean; path?: string; error?: string };
@@ -402,6 +410,12 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           } catch (execError) {
             toolError = execError instanceof Error ? execError : new Error(String(execError));
             result = { success: false, error: toolError.message };
+          } finally {
+            if (call.name === "browser") {
+              activeBrowserRequestId = null;
+              activeBrowserSender = null;
+              onBrowserControlChange(false);
+            }
           }
 
           if (controller.signal.aborted) break;
@@ -538,9 +552,20 @@ async function abortChatCompletion(_event: IpcMainInvokeEvent, payload: { reques
   await BrowserController.stop();
 }
 
-export function registerLlmIpc(): void {
+async function stopBrowserInteraction(): Promise<void> {
+  if (!activeBrowserRequestId) return;
+  if (activeBrowserSender && !activeBrowserSender.isDestroyed()) {
+    activeBrowserSender.send("boris:chat:browser-stop-requested", { requestId: activeBrowserRequestId });
+  }
+  abortControllers.get(activeBrowserRequestId)?.abort();
+  await BrowserController.stop();
+}
+
+export function registerLlmIpc(options?: { onBrowserControlChange?: (active: boolean) => void }): void {
+  onBrowserControlChange = options?.onBrowserControlChange || (() => {});
   ipcMain.handle("boris:chat:stream", streamChatCompletion);
   ipcMain.handle("boris:chat:abort", abortChatCompletion);
+  ipcMain.handle("boris:browser:stop", stopBrowserInteraction);
 }
 
 export { LLM_CONFIG };

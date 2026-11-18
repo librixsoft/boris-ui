@@ -19,6 +19,7 @@ class BrowserController {
   private browser: Browser | null = null;
   private page: Page | null = null;
   private _launched = false;
+  private _aborted = false;
 
   private async _ensureLaunched(): Promise<void> {
     if (this._launched) return;
@@ -70,14 +71,20 @@ class BrowserController {
     if (human) {
       const intermediateSteps = Math.max(steps, 12);
       for (let i = 1; i <= intermediateSteps; i++) {
+        if (this._aborted || !this.page) {
+          throw new Error("Operación de navegador cancelada");
+        }
         const t = i / intermediateSteps;
         const jitterX = (Math.random() - 0.5) * 3;
         const jitterY = (Math.random() - 0.5) * 3;
-        await this.page!.mouse.move(x * t + jitterX, y * t + jitterY);
-        await this.page!.waitForTimeout(10 + Math.random() * 15);
+        await this.page.mouse.move(x * t + jitterX, y * t + jitterY);
+        await this.page.waitForTimeout(10 + Math.random() * 15);
       }
     }
-    await this.page!.mouse.move(x, y);
+    if (this._aborted || !this.page) {
+      throw new Error("Operación de navegador cancelada");
+    }
+    await this.page.mouse.move(x, y);
     return { success: true, x, y };
   }
 
@@ -127,19 +134,26 @@ class BrowserController {
 
     const chars = value.split("");
     for (let i = 0; i < chars.length; i++) {
+      if (this._aborted || !this.page) {
+        throw new Error("Operación de navegador cancelada");
+      }
       const char = chars[i];
 
       if (mistakes && Math.random() < 0.1 && i > 0 && mistakesCount > 0) {
         const wrongChar = String.fromCharCode(97 + Math.floor(Math.random() * 26));
-        await this.page!.keyboard.type(wrongChar);
-        await this.page!.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
-        await this.page!.keyboard.press("Backspace");
-        await this.page!.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
+        await this.page.keyboard.type(wrongChar);
+        await this.page.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
+        if (this._aborted || !this.page) throw new Error("Operación de navegador cancelada");
+        await this.page.keyboard.press("Backspace");
+        await this.page.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
       }
 
-      await this.page!.keyboard.type(char);
+      if (this._aborted || !this.page) {
+        throw new Error("Operación de navegador cancelada");
+      }
+      await this.page.keyboard.type(char);
       const delay = typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min);
-      await this.page!.waitForTimeout(delay);
+      await this.page.waitForTimeout(delay);
     }
 
     return { success: true, value };
@@ -321,16 +335,26 @@ class BrowserController {
   }
 
   async close(): Promise<BrowserResult> {
-    if (this.page) {
-      await this.page.close().catch(() => {});
-      this.page = null;
+    this._aborted = true;
+    try {
+      if (this.page) {
+        await this.page.close().catch(() => {});
+        this.page = null;
+      }
+      if (this.browser) {
+        await this.browser.close().catch(() => {});
+        this.browser = null;
+      }
+      this.playwright = null;
+      this._launched = false;
+      return { success: true };
+    } finally {
+      this._aborted = false;
     }
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-    }
-    this._launched = false;
-    return { success: true };
+  }
+
+  async stop(): Promise<BrowserResult> {
+    return await this.close();
   }
 
   get isLaunched(): boolean {

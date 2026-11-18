@@ -15,7 +15,8 @@ type BrowserAction =
   | "title"
   | "url"
   | "pageText"
-  | "close";
+  | "close"
+  | "stop";
 
 interface BrowserParams {
   action: BrowserAction;
@@ -59,7 +60,8 @@ const tool: Tool = {
           "title",
           "url",
           "pageText",
-          "close"
+          "close",
+          "stop"
         ],
         description: "Acción visual o de interacción por coordenadas a ejecutar"
       },
@@ -203,6 +205,9 @@ const tool: Tool = {
       }
       case "close": {
         return await BrowserController.close();
+      }
+      case "stop": {
+        return await BrowserController.stop();
       }
       default:
         throw new Error(`Acción de browser no soportada: ${action}`);

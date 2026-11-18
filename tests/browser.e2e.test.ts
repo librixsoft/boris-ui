@@ -225,6 +225,14 @@ describe("Browser E2E - Flujos de Detección de Coordenadas y Manejo de Errores"
   });
 
   describe("Cierre limpio de sesión", () => {
+    it("debería detener y cerrar el navegador mediante la acción stop", async () => {
+      await BrowserController.goto(LINKEDIN_PAGE_URL);
+      const result = await executeBrowserTool({ action: "stop" });
+
+      expect(result.success).toBe(true);
+      expect(BrowserController.isLaunched).toBe(false);
+    });
+
     it("debería cerrar el navegador correctamente", async () => {
       const result = await executeBrowserTool({ action: "close" });
       expect(result.success).toBe(true);

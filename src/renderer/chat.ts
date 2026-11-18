@@ -28,6 +28,7 @@ interface WindowBorisChat {
     onError: (message: string) => void;
     onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
     onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
+    onBrowserStop?: () => void;
   }, sessionId?: string): ChatStreamResult;
 }
 
@@ -42,6 +43,8 @@ interface Window {
 const messagesEl = document.getElementById("messages") as MessagesElement;
 const inputEl = document.getElementById("input") as InputElement;
 const sendEl = document.getElementById("send") as SendElement;
+const browserControlOverlay = document.getElementById("browser-control-overlay") as HTMLDivElement;
+const browserStopEl = document.getElementById("browser-stop") as HTMLButtonElement;
 
 const chatHistory: ChatMessage[] = [];
 let activeStream: ChatStreamResult | null = null;
@@ -51,6 +54,8 @@ let currentReasoningBlock: HTMLDivElement | null = null;
 let hasReasoning = false;
 let pendingToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 let chatSessionId: string | null = null;
+let browserControlActive = false;
+let browserStopRequested = false;
 
 function scrollToBottom(): void {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -97,7 +102,19 @@ function autoResize(): void {
 }
 
 function setSending(isSending: boolean): void {
-  sendEl.disabled = isSending;
+  sendEl.disabled = isSending || browserControlActive;
+  inputEl.disabled = browserControlActive;
+}
+
+function setBrowserControlActive(active: boolean): void {
+  browserControlActive = active;
+  browserControlOverlay.hidden = !active;
+  if (active) {
+    browserStopEl.disabled = false;
+    browserStopEl.innerHTML = "<span aria-hidden=\"true\">■</span><span>Stop</span>";
+  }
+  inputEl.disabled = active;
+  sendEl.disabled = active || Boolean(activeStream);
 }
 
 function appendQueuedMessage(text: string): void {
@@ -424,20 +441,37 @@ function streamResponse(): void {
     onToolCall(data) {
       pendingToolCalls.push(data);
       renderToolCall(data.name, data.args);
+      if (data.name === "browser") {
+        setBrowserControlActive(true);
+      }
     },
     onToolResult(data) {
       renderToolResult(data.name, data.result, data.success);
+      if (data.name === "browser") {
+        setBrowserControlActive(false);
+      }
+    },
+    onBrowserStop() {
+      markBrowserStopRequested();
     },
     onDone() {
       if (streamTimer) {
         clearTimeout(streamTimer);
         streamTimer = null;
       }
-      if (!streamingBubble) {
+      setBrowserControlActive(false);
+      const wasBrowserStopRequested = browserStopRequested;
+      if (wasBrowserStopRequested) {
+        removeTyping(indicator);
+        appendMessage("bot", "Ejecución detenida por el usuario.");
+        browserStopRequested = false;
+      } else if (!streamingBubble) {
         removeTyping(indicator);
         streamingBubble = appendMessage("bot", "Sin respuesta del modelo.");
       }
-      chatHistory.push({ role: "assistant", content });
+      if (!wasBrowserStopRequested) {
+        chatHistory.push({ role: "assistant", content });
+      }
       activeStream = null;
       processQueue();
     },
@@ -446,6 +480,7 @@ function streamResponse(): void {
         clearTimeout(streamTimer);
         streamTimer = null;
       }
+      setBrowserControlActive(false);
       removeTyping(indicator);
       appendMessage("bot", `Error: ${message}`);
       activeStream = null;
@@ -454,7 +489,22 @@ function streamResponse(): void {
   }, chatSessionId || undefined);
 }
 
+function markBrowserStopRequested(): void {
+  if (browserStopRequested) return;
+  browserStopRequested = true;
+  browserStopEl.disabled = true;
+  browserStopEl.innerHTML = "<span>Deteniendo...</span>";
+  clearQueue();
+}
+
+browserStopEl.addEventListener("click", () => {
+  if (!activeStream || browserStopEl.disabled) return;
+  markBrowserStopRequested();
+  activeStream.stop();
+});
+
 function send(): void {
+  if (browserControlActive) return;
   const text = inputEl.value.trim();
   if (!text) return;
 

@@ -33,6 +33,17 @@
     </footer>
   </div>
 
+  <div class="browser-control-overlay" id="browser-control-overlay" hidden>
+    <div class="browser-control-dialog" role="dialog" aria-modal="true" aria-labelledby="browser-control-title">
+      <p id="browser-control-title">Boris está controlando el navegador</p>
+      <button id="browser-stop" type="button" aria-label="Detener el agente">
+        <span aria-hidden="true">■</span>
+        <span>Stop</span>
+      </button>
+      <p class="browser-control-hint">El chat está pausado mientras Boris interactúa con la pantalla.</p>
+    </div>
+  </div>
+
   <script type="module" src="chat.js"></script>
 </body>
 </html>

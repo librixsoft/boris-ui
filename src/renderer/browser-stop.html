@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="browser-stop-page">
+  <button id="browser-stop" type="button" aria-label="Detener el agente">
+    <span aria-hidden="true">■</span>
+    <span>Stop</span>
+  </button>
+  <script>
+    document.getElementById("browser-stop").addEventListener("click", (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.innerHTML = "<span>Deteniendo...</span>";
+      window.boris.browserControl.stop();
+    });
+  </script>
+</body>
+</html>

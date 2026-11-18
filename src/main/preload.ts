@@ -7,6 +7,7 @@ interface ChatHandlers {
   onError: (message: string) => void;
   onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
   onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
+  onBrowserStop?: () => void;
 }
 
 interface AttachListenersResult {
@@ -45,6 +46,7 @@ function attachListeners(requestId: string, handlers: ChatHandlers): AttachListe
     ipcRenderer.off("boris:chat:error", onError);
     ipcRenderer.off("boris:chat:tool-call", onToolCallInner);
     ipcRenderer.off("boris:chat:tool-result", onToolResultInner);
+    ipcRenderer.off("boris:chat:browser-stop-requested", onBrowserStopRequested);
   }
 
   const onToolCallInner = (_event: IpcRendererEvent, data: { requestId: string; name: string; args: Record<string, unknown> }): void => {
@@ -59,12 +61,19 @@ function attachListeners(requestId: string, handlers: ChatHandlers): AttachListe
     }
   };
 
+  const onBrowserStopRequested = (_event: IpcRendererEvent, data: { requestId: string }): void => {
+    if (data.requestId === requestId) {
+      handlers.onBrowserStop?.();
+    }
+  };
+
   ipcRenderer.on("boris:chat:chunk", onChunk);
   ipcRenderer.on("boris:chat:reasoning", onReasoning);
   ipcRenderer.on("boris:chat:done", onDone);
   ipcRenderer.on("boris:chat:error", onError);
   ipcRenderer.on("boris:chat:tool-call", onToolCallInner);
   ipcRenderer.on("boris:chat:tool-result", onToolResultInner);
+  ipcRenderer.on("boris:chat:browser-stop-requested", onBrowserStopRequested);
 
   return detach;
 }
@@ -78,10 +87,15 @@ interface ToolsApi {
   list(): Promise<unknown>;
 }
 
+interface BrowserControlApi {
+  stop(): Promise<void>;
+}
+
 interface BorisApi {
   platform: string;
   chat: ChatApi;
   tools: ToolsApi;
+  browserControl: BrowserControlApi;
 }
 
 declare global {
@@ -113,6 +127,11 @@ contextBridge.exposeInMainWorld("boris", {
     },
     list(): Promise<unknown> {
       return ipcRenderer.invoke("boris:tools:list");
+    }
+  },
+  browserControl: {
+    stop(): Promise<void> {
+      return ipcRenderer.invoke("boris:browser:stop");
     }
   }
 });
