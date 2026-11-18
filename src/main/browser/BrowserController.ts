@@ -13,6 +13,10 @@ export interface BrowserResult {
   x?: number;
   y?: number;
   error?: string;
+  viewport?: { width: number; height: number };
+  scroll?: { y: number; height: number; atBottom: boolean };
+  links?: Array<{ href: string; text: string; x: number; y: number; visible: boolean }>;
+  element?: { tag: string; text: string; href: string | null; role: string | null; visible: boolean };
 }
 
 class BrowserController {
@@ -78,8 +82,17 @@ class BrowserController {
     await this.ensurePage();
     await this.ensureVisible();
     await this.page!.waitForTimeout(100);
+    const viewport = await this.page!.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight
+    }));
+    const scroll = await this.page!.evaluate(() => ({
+      y: window.scrollY,
+      height: document.documentElement.scrollHeight,
+      atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2
+    }));
     const buffer = await this.page!.screenshot();
-    return { success: true, screenshot: buffer.toString("base64") };
+    return { success: true, screenshot: buffer.toString("base64"), viewport, scroll };
   }
 
   async mouseMove(x: number, y: number, options?: { steps?: number; human?: boolean }): Promise<BrowserResult> {
@@ -246,56 +259,238 @@ class BrowserController {
     await this.ensurePage();
     await this.page!.mouse.wheel(0, deltaY);
     await this.page!.waitForTimeout(200);
-    return { success: true };
+    const viewport = await this.page!.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    const scroll = await this.page!.evaluate(() => ({
+      y: window.scrollY,
+      height: document.documentElement.scrollHeight,
+      atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2
+    }));
+    return { success: true, viewport, scroll };
   }
 
-  async findVisualCoordinates(query: { text?: string; placeholder?: string; targetColor?: string }): Promise<{ x: number; y: number } | null> {
+  async findVisualCoordinates(query: { text?: string; placeholder?: string; targetColor?: string }): Promise<{ x: number; y: number } | { found: false; closest?: { text: string; x: number; y: number }; hint?: string }> {
     await this.ensurePage();
 
     if (query.targetColor) {
       const ss = await this.screenshot();
-      return await this.findCoordinatesFromScreenshot(ss.screenshot!, query.targetColor);
+      return await this.findCoordinatesFromScreenshot(ss.screenshot!, query.targetColor) ?? { found: false, hint: `Color ${query.targetColor} no encontrado en la captura` };
     }
 
-    const searchText = (query.text || query.placeholder || "").trim().toLowerCase();
-    if (!searchText) return null;
+    const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+    const term = normalize(query.text || query.placeholder || "");
+    if (!term) return { found: false, hint: "No se proporcionó texto ni placeholder para buscar" };
 
-    return await this.page!.evaluate((term) => {
-      // 1. Buscar en inputs / textareas por placeholder, value o aria-label
+    const result = await this.page!.evaluate((term) => {
+      const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+      // 1. Inputs por placeholder/aria/value
       const inputs = Array.from(document.querySelectorAll("input, textarea, [contenteditable='true']"));
       for (const input of inputs) {
-        const ph = (input.getAttribute("placeholder") || "").toLowerCase();
-        const aria = (input.getAttribute("aria-label") || "").toLowerCase();
-        const val = ((input as HTMLInputElement).value || "").toLowerCase();
+        const ph = normalize(input.getAttribute("placeholder") || "");
+        const aria = normalize(input.getAttribute("aria-label") || "");
+        const val = normalize((input as HTMLInputElement).value || "");
         if (ph.includes(term) || aria.includes(term) || val.includes(term)) {
           const rect = input.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
-            return {
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2)
-            };
+            return { type: "found" as const, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), text: ph || aria || val, visible: rect.top >= 0 && rect.top < window.innerHeight };
           }
         }
       }
 
-      // 2. Buscar en botones o elementos interactivos por texto visible o aria-label
-      const interactives = Array.from(document.querySelectorAll("button, a, div, span, p, h1, h2, h3"));
-      for (const el of interactives) {
-        const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-        const text = (el.textContent || "").toLowerCase().trim();
-        if (aria === term || text === term || (text.includes(term) && text.length < 60)) {
-          const rect = el.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            return {
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2)
-            };
-          }
-        }
+      // 2. Todos los elementos con texto en DOM order
+      const allElements = Array.from(document.querySelectorAll("a, button, h1, h2, h3, h4, h5, h6, p, span, li, div, footer, header, main, section, article"));
+      const candidates: Array<{ text: string; x: number; y: number; visible: boolean; area: number }> = [];
+
+      for (const el of allElements) {
+        const text = normalize(el.textContent || "");
+        if (!text || !text.includes(term)) continue;
+
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+
+        const aria = normalize(el.getAttribute("aria-label") || "");
+        const exactMatch = text === term || aria === term;
+        const partialMatch = text.includes(term) && text.length < 80;
+        if (!exactMatch && !partialMatch) continue;
+
+        const area = rect.width * rect.height;
+        const visible = rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.top < window.innerHeight && rect.bottom > 0;
+
+        candidates.push({ text, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), visible, area });
       }
 
-      return null;
-    }, searchText);
+      if (candidates.length === 0) return { type: "notFound" as const };
+
+      // Descartar wrappers que contienen otros candidatos con <= 40% de su área
+      const filtered = candidates.filter((c) => !candidates.some((other) => other.area <= c.area * 0.4 && other.text !== c.text));
+
+      if (filtered.length === 0) return { type: "notFound" as const };
+
+      // Priorizar visible, luego el más pequeño (leaf-ish)
+      const visible = filtered.filter((c) => c.visible);
+      const sorted = (visible.length > 0 ? visible : filtered).sort((a, b) => a.area - b.area);
+      const best = sorted[0];
+
+      return { type: "found" as const, x: best.x, y: best.y, text: best.text, visible: best.visible };
+    }, term);
+
+    if (result.type === "found") {
+      if (!result.visible) {
+        return { found: false, closest: { text: result.text, x: result.x, y: result.y }, hint: `Elemento existe pero fuera de pantalla. Usa scrollToText("${query.text}")` };
+      }
+      return { x: result.x, y: result.y, found: true };
+    }
+
+    // 3. Verificar si el texto existe en el DOM
+    const inDom = await this.page!.evaluate((term) =>
+      (document.body?.textContent ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(term)
+    );
+
+    if (inDom) {
+      return { found: false, hint: `El texto existe en el DOM pero no es interactivo/visible aquí. Usa pageText o scrollToText` };
+    }
+
+    // 4. Fuzzy match
+    const fuzzyResult = await this.page!.evaluate((term) => {
+      const allText = Array.from(document.querySelectorAll("a, button, h1, h2, h3, h4, h5, h6, p, span, li"))
+        .map((el) => ({ text: (el.textContent || "").trim(), rect: el.getBoundingClientRect() }))
+        .filter((e) => e.text.length > 0 && e.text.length < 80 && e.rect.width > 0)
+        .map((e) => {
+          const normalized = e.text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+          let matches = 0;
+          for (let i = 0; i <= normalized.length - term.length; i++) {
+            if (normalized.substring(i, i + term.length) === term) matches++;
+          }
+          const charDiff = Math.abs(e.text.length - term.length);
+          return { text: e.text, score: matches / Math.max(term.length, 1) - charDiff * 0.01, x: Math.round(e.rect.left + e.rect.width / 2), y: Math.round(e.rect.top + e.rect.height / 2) };
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 1);
+      return allText;
+    }, term);
+
+    const closest = fuzzyResult[0];
+    return { found: false, closest: closest ? { text: closest.text, x: closest.x, y: closest.y } : undefined, hint: `No existe un elemento con ese texto. Revisá pageText: el texto real puede diferir (acentos, mayúsculas, URL)` };
+  }
+
+  async getLinks(limit: number): Promise<BrowserResult> {
+    await this.ensurePage();
+    const links = await this.page!.evaluate((limit) => {
+      const out: Array<{ href: string; text: string; x: number; y: number; visible: boolean }> = [];
+      for (const a of Array.from(document.querySelectorAll("a[href]"))) {
+        const r = a.getBoundingClientRect();
+        const visible = r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0;
+        if (!visible) continue;
+        out.push({ href: a.href, text: a.textContent.trim().slice(0, 120), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), visible });
+        if (out.length >= limit) break;
+      }
+      return out;
+    }, limit);
+    return { success: true, links };
+  }
+
+  async elementAtPoint(x: number, y: number): Promise<BrowserResult> {
+    await this.ensurePage();
+    const el = await this.page!.evaluate(({ x, y }) => {
+      const node = document.elementFromPoint(x, y) as HTMLElement;
+      const a = node?.closest("a[href]") ?? null;
+      return {
+        tag: node?.tagName.toLowerCase() ?? "none",
+        text: (node?.textContent ?? "").trim().slice(0, 120),
+        href: a?.href ?? null,
+        role: node?.getAttribute("role") ?? null,
+        visible: node !== null && node.getBoundingClientRect().width > 0
+      };
+    }, { x, y });
+    return { success: true, element: el };
+  }
+
+  async scrollToText(text: string, offset = 0): Promise<BrowserResult> {
+    const term = text.trim().toLowerCase();
+    const maxAttempts = 12;
+    for (let i = 0; i < maxAttempts; i++) {
+      const found = await this.findVisualCoordinates({ text });
+      if (found && typeof found === "object" && "x" in found && "y" in found && "found" in found && found.found) {
+        const viewport = await this.page!.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+        const scroll = await this.page!.evaluate(() => ({ y: window.scrollY, height: document.documentElement.scrollHeight, atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2 }));
+        return { success: true, x: (found as { x: number; y: number }).x + offset, y: (found as { x: number; y: number }).y, viewport, scroll };
+      }
+      const scrollState = await this.page!.evaluate(() => ({ y: window.scrollY, height: document.documentElement.scrollHeight, atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2 }));
+      if (scrollState.atBottom) {
+        return { success: false, found: false, error: `Texto no existe en la página o está fuera del alcance del scroll: "${text}"` };
+      }
+      await this.mouseWheel(300);
+    }
+    return { success: false, found: false, error: `Texto no visible tras varios scrolls: "${text}"` };
+  }
+
+  async scrollToBottom(): Promise<BrowserResult> {
+    await this.ensurePage();
+    const maxScrolls = 50;
+    for (let i = 0; i < maxScrolls; i++) {
+      const scrollBefore = await this.page!.evaluate(() => window.scrollY);
+      await this.page!.mouse.wheel(0, 800);
+      await this.page!.waitForTimeout(200);
+      const scrollAfter = await this.page!.evaluate(() => window.scrollY);
+      const scrollHeight = await this.page!.evaluate(() => document.documentElement.scrollHeight);
+      const viewportH = await this.page!.evaluate(() => window.innerHeight);
+      if (scrollAfter + viewportH >= scrollHeight - 10) {
+        const viewport = await this.page!.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+        const scroll = await this.page!.evaluate(() => ({ y: window.scrollY, height: document.documentElement.scrollHeight, atBottom: true }));
+        return { success: true, viewport, scroll };
+      }
+      if (scrollAfter === scrollBefore && i > 0) {
+        const viewport = await this.page!.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+        const scroll = await this.page!.evaluate(() => ({ y: window.scrollY, height: document.documentElement.scrollHeight, atBottom: true }));
+        return { success: true, viewport, scroll };
+      }
+    }
+    await this.page!.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await this.page!.waitForTimeout(300);
+    const viewport = await this.page!.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    const scroll = await this.page!.evaluate(() => ({ y: window.scrollY, height: document.documentElement.scrollHeight, atBottom: true }));
+    return { success: true, viewport, scroll };
+  }
+
+  async findElements(text: string, limit: number): Promise<BrowserResult> {
+    await this.ensurePage();
+    const bodyText = await this.page!.evaluate(({ term, maxLimit }) => {
+      const lowerTerm = term.toLowerCase();
+      const results: Array<{ text: string; x: number; y: number; visible: boolean; tag: string }> = [];
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+      const elementsToCheck: Element[] = [];
+      let node = walker.nextNode() as Element;
+      while (node) {
+        if (["SCRIPT", "STYLE", "NOSCRIPT", "HEAD"].includes(node.tagName)) {
+          walker.currentNode = node;
+          walker.nextNode();
+          continue;
+        }
+        elementsToCheck.push(node);
+        node = walker.nextNode() as Element;
+      }
+      for (const el of elementsToCheck) {
+        const elText = (el.textContent || "").trim();
+        if (!elText || !elText.toLowerCase().includes(lowerTerm)) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const visible = rect.top >= 0 && rect.top < window.innerHeight && rect.bottom > 0;
+        results.push({ text: elText.slice(0, 120), x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), visible, tag: el.tagName.toLowerCase() });
+        if (results.length >= maxLimit) break;
+      }
+      return results;
+    }, { term: text, maxLimit: limit });
+    return { success: true, elements: bodyText };
+  }
+
+  private async isInViewport(coords: { x: number; y: number }): Promise<boolean> {
+    await this.ensurePage();
+    return await this.page!.evaluate((coords) => {
+      const node = document.elementFromPoint(coords.x, coords.y) as HTMLElement;
+      if (!node) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.top < window.innerHeight;
+    }, coords);
   }
 
   async pressKey(key: string): Promise<BrowserResult> {

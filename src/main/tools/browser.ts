@@ -18,10 +18,15 @@ type BrowserAction =
   | "navigate"
   | "screenshot"
   | "findCoordinates"
+  | "findElements"
+  | "getLinks"
+  | "elementAtPoint"
   | "mouseMove"
   | "mouseClick"
   | "mouseDoubleClick"
   | "mouseWheel"
+  | "scrollToText"
+  | "scrollToBottom"
   | "type"
   | "pressKey"
   | "pressKeyHuman"
@@ -43,6 +48,8 @@ interface BrowserParams {
   y?: number;
   human?: boolean;
   targetColor?: string;
+  limit?: number;
+  offset?: number;
   options?: {
     mistakes?: boolean;
     mistakesCount?: number;
@@ -53,7 +60,7 @@ interface BrowserParams {
 const tool: Tool = {
   name: "browser",
   description:
-    "Navegación web visible y automatización basada exclusivamente en capturas de pantalla, visión y coordenadas (X, Y). Permite visitar una URL, tomar capturas de pantalla, localizar coordenadas de elementos visuales, mover el cursor físico, hacer clic en coordenadas, teclear texto con pulsaciones humanas, presionar teclas y leer texto de la página. No utiliza selectores HTML.",
+    "Navegación web visible y automatización por coordenadas y visión. El modelo VE la página en cada screenshot: úsala para percibir la pantalla y confirmar clics. Combina la visión con pageText, getLinks, elementAtPoint y findCoordinates para extraer datos exactos y confirmar coordenadas. Acciones: navigate, screenshot, findCoordinates, findElements, getLinks, elementAtPoint, mouseWheel, scrollToText, scrollToBottom, mouseMove, mouseClick, mouseDoubleClick, type, pressKey, pressKeyHuman, title, url, pageText, close, stop. Reglas: (1) tras navigate, mouseClick o mouseWheel, usa screenshot para ver el resultado; (2) nunca mouseClick sin haber confirmado el punto con findCoordinates, elementAtPoint o getLinks; (3) para extraer emails, nombres o URLs usa pageText y getLinks, la imagen puede tener errores de lectura; (4) para llegar al final: scrollToBottom; para un texto concreto: scrollToText.",
   schema: {
     type: "object",
     properties: {
@@ -63,10 +70,15 @@ const tool: Tool = {
           "navigate",
           "screenshot",
           "findCoordinates",
+          "findElements",
+          "getLinks",
+          "elementAtPoint",
           "mouseMove",
           "mouseClick",
           "mouseDoubleClick",
           "mouseWheel",
+          "scrollToText",
+          "scrollToBottom",
           "type",
           "pressKey",
           "pressKeyHuman",
@@ -173,14 +185,15 @@ const tool: Tool = {
             placeholder: params.placeholder as string | undefined,
             targetColor: params.targetColor as string | undefined
           });
-          if (!coords) {
+          if (!coords || (typeof coords === "object" && "found" in coords && !coords.found)) {
             return {
               success: false,
               found: false,
-              error: `Elemento visual no encontrado en pantalla: "${params.text || params.placeholder || params.targetColor}"`
+              error: `Elemento visual no encontrado en pantalla: "${params.text || params.placeholder || params.targetColor}"`,
+              ...(typeof coords === "object" && "hint" in coords ? { hint: coords.hint } : {})
             };
           }
-          return { success: true, found: true, x: coords.x, y: coords.y };
+          return { success: true, found: true, x: (coords as { x: number; y: number }).x, y: (coords as { x: number; y: number }).y };
         }
         case "mouseWheel": {
           return await BrowserController.mouseWheel(typeof params.deltaY === "number" ? params.deltaY : 300);
@@ -232,6 +245,30 @@ const tool: Tool = {
         }
         case "pageText": {
           return await BrowserController.getPageText();
+        }
+        case "findElements": {
+          if (!params.text) {
+            throw validationError("action findElements requiere text");
+          }
+          return await BrowserController.findElements(params.text as string, typeof params.limit === "number" ? params.limit : 10);
+        }
+        case "getLinks": {
+          return await BrowserController.getLinks(typeof params.limit === "number" ? params.limit : 10);
+        }
+        case "elementAtPoint": {
+          if (typeof params.x !== "number" || typeof params.y !== "number") {
+            throw validationError("action elementAtPoint requiere x e y numéricos");
+          }
+          return await BrowserController.elementAtPoint(params.x, params.y);
+        }
+        case "scrollToText": {
+          if (!params.text) {
+            throw validationError("action scrollToText requiere text");
+          }
+          return await BrowserController.scrollToText(params.text as string, typeof params.offset === "number" ? params.offset : 0);
+        }
+        case "scrollToBottom": {
+          return await BrowserController.scrollToBottom();
         }
         case "close": {
           return await BrowserController.close();

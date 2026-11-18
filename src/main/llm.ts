@@ -16,9 +16,15 @@ export interface NativeToolCallFormat {
   };
 }
 
+export interface ChatContentPart {
+  type: "text" | "image_url";
+  text?: string;
+  image_url?: { data_uri: string };
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | ChatContentPart[];
   tool_calls?: NativeToolCallFormat[];
   tool_call_id?: string;
 }
@@ -79,6 +85,8 @@ const LLM_CONFIG: LLMConfig = {
   model: "gemma-4b-64k:latest"
 };
 
+const MAX_TOOL_ROUNDS = Number(process.env.BORIS_MAX_TOOL_ROUNDS || 200);
+
 const abortControllers = new Map<string, AbortController>();
 
 function buildSystemPrompt(tools: Tool[]): string {
@@ -99,7 +107,16 @@ Cuando necesites realizar una operación, usá tool calling nativo: las herramie
 Después de ejecutar herramientas, confirmá al usuario lo que se hizo y terminá. No generes razonamiento adicional tras recibir el resultado de una herramienta.
 
 Herramientas disponibles:
-${toolInstructions}`;
+${toolInstructions}
+
+Estrategia de navegador (visión):
+- Tras navigate, mouseWheel, mouseClick, type o pressKey: usa screenshot para VER la página. El resultado incluye viewport y scroll: sabés dónde está dentro de la imagen y si llegaste al final.
+- Visión para navegar y confirmar; DOM para datos exactos: para extraer emails, nombres, URLs o texto usa pageText y getLinks (la imagen puede tener errores de lectura).
+- Para llegar al final: usa scrollToBottom; para un texto concreto: usa scrollToText.
+- No uses mouseClick sin haber confirmado el punto con findCoordinates, elementAtPoint o getLinks.
+- Si findCoordinates falla 2 veces seguidas con el mismo texto: no adivines coordenadas. Usa pageText para leer el texto real, ajusta la búsqueda o usa getLinks.
+- Si tras un clic la captura siguiente no muestra el cambio esperado: no repitir el clic a ciegas; verificá con elementAtPoint o findCoordinates antes.
+`;
 }
 
 function buildToolsParam(tools: Tool[]): Array<{
@@ -371,8 +388,8 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
 
       if (pendingCalls.length > 0) {
         postToolCallIterations++;
-        if (postToolCallIterations >= 3) {
-          break;
+        if (postToolCallIterations > MAX_TOOL_ROUNDS) {
+          throw new Error(`Límite de rounds de herramientas alcanzado (${MAX_TOOL_ROUNDS})`);
         }
 
         currentMessages.push({
@@ -446,13 +463,11 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
               enrichmentChunk += `Tecla: ${browserResult.key}\n`;
             }
             if (browserResult.text && browserResult.text.length > 0) {
-              const truncated = browserResult.text.length > 500 ? browserResult.text.slice(0, 500) + "..." : browserResult.text;
-              enrichmentChunk += `Texto: ${truncated}\n`;
+              enrichmentChunk += `Texto: ${browserResult.text}\n`;
             }
             const { screenshot: _, ...browserResultWithoutScreenshot } = browserResult as Record<string, unknown>;
             toolResultPayload = {
-              ...browserResultWithoutScreenshot,
-              text: browserResult.text && browserResult.text.length > 500 ? browserResult.text.slice(0, 500) + "..." : browserResult.text
+              ...browserResultWithoutScreenshot
             };
           }
 
@@ -462,11 +477,49 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             success
           });
 
-          currentMessages.push({
-            role: "tool",
-            tool_call_id: call.id!,
-            content: JSON.stringify(call.name === "browser" ? toolResultPayload : result)
-          });
+          if (call.name === "browser" && success) {
+            const browserResult = result as { url?: string; value?: string; text?: string; screenshot?: string; title?: string; key?: string; x?: number; y?: number; viewport?: { width: number; height: number }; scroll?: { y: number; height: number; atBottom: boolean } };
+            const text = browserResult.text ?? undefined;
+            const hasScreenshot = Boolean(browserResult.screenshot);
+
+            if (hasScreenshot) {
+              currentMessages.push({
+                role: "tool",
+                tool_call_id: call.id!,
+                content: [
+                  {
+                    type: "text" as const,
+                    text: JSON.stringify({
+                      url: browserResult.url,
+                      title: browserResult.title,
+                      x: browserResult.x,
+                      y: browserResult.y,
+                      key: browserResult.key,
+                      text,
+                      viewport: browserResult.viewport,
+                      scroll: browserResult.scroll,
+                    }),
+                  },
+                  {
+                    type: "image_url" as const,
+                    image_url: { data_uri: `data:image/png;base64,${browserResult.screenshot}` },
+                  },
+                ]
+              });
+            } else {
+              currentMessages.push({
+                role: "tool",
+                tool_call_id: call.id!,
+                content: JSON.stringify({ url: browserResult.url, title: browserResult.title, x: browserResult.x, y: browserResult.y, key: browserResult.key, text, viewport: browserResult.viewport, scroll: browserResult.scroll })
+              });
+            }
+          } else {
+            currentMessages.push({
+              role: "tool",
+              tool_call_id: call.id!,
+              content: JSON.stringify(result)
+            });
+          }
         }
 
         if (controller.signal.aborted) {
