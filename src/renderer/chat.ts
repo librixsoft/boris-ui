@@ -318,6 +318,35 @@ function renderBrowserResult(result: unknown, success: boolean): void {
   if (result && typeof result === "object") {
     const browserResult = result as Record<string, unknown>;
 
+    if (browserResult.error) {
+      const errorEl = document.createElement("div");
+      errorEl.className = "browser-detail browser-detail--error";
+      errorEl.innerHTML = `<span class="browser-detail-label">Error:</span> <span class="browser-detail-value">${escapeHtml(String(browserResult.error))}</span>`;
+      info.appendChild(errorEl);
+    }
+
+    if (browserResult.errorDetail && typeof browserResult.errorDetail === "object") {
+      const detail = browserResult.errorDetail as Record<string, unknown>;
+      const detailEl = document.createElement("details");
+      detailEl.className = "browser-error-detail";
+
+      const summary = document.createElement("summary");
+      summary.textContent = "Detalle del error";
+      detailEl.appendChild(summary);
+
+      const pre = document.createElement("pre");
+      pre.className = "browser-error-detail-content";
+      const lines: string[] = [];
+      if (detail.operation) lines.push(`Operación: ${String(detail.operation)}`);
+      if (detail.url) lines.push(`URL: ${String(detail.url)}`);
+      if (detail.cause) lines.push(`Causa: ${String(detail.cause)}`);
+      if (detail.stack) lines.push(`Stack:\n${String(detail.stack)}`);
+      pre.textContent = lines.join("\n") || JSON.stringify(detail, null, 2);
+      detailEl.appendChild(pre);
+
+      info.appendChild(detailEl);
+    }
+
     if (browserResult.url) {
       const urlEl = document.createElement("div");
       urlEl.className = "browser-detail";
@@ -402,6 +431,7 @@ function streamResponse(): void {
   streamTimer = setTimeout(() => {
     if (activeStream) {
       activeStream.stop();
+      setBrowserControlActive(false);
       if (!streamingBubble) {
         removeTyping(indicator);
       }
@@ -446,9 +476,6 @@ function streamResponse(): void {
     },
     onToolResult(data) {
       renderToolResult(data.name, data.result, data.success);
-      if (data.name === "browser") {
-        setBrowserControlActive(false);
-      }
     },
     onDone() {
       if (streamTimer) {

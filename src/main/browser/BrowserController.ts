@@ -360,6 +360,11 @@ class BrowserController {
   get isLaunched(): boolean {
     return this._launched;
   }
+
+  get currentUrl(): string | undefined {
+    if (!this.page) return undefined;
+    return this.page.url();
+  }
 }
 
 export { BrowserController };

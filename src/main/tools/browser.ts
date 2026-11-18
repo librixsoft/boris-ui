@@ -1,5 +1,18 @@
 import BrowserController from "../browser/BrowserController";
+import BrowserError, { toBrowserError } from "../browser/BrowserError";
 import { Tool } from "./registry";
+
+interface BrowserErrorOutput {
+  success: boolean;
+  error: string;
+  errorDetail: {
+    operation: string;
+    url?: string;
+    originalMessage: string;
+    stack?: string;
+    cause?: string;
+  };
+}
 
 type BrowserAction =
   | "navigate"
@@ -115,6 +128,13 @@ const tool: Tool = {
     value?: string;
     text?: string;
     error?: string;
+    errorDetail?: {
+      operation: string;
+      url?: string;
+      originalMessage: string;
+      stack?: string;
+      cause?: string;
+    };
     screenshot?: string;
     title?: string;
     key?: string;
@@ -124,93 +144,111 @@ const tool: Tool = {
   }> {
     const action = params.action as BrowserAction;
 
-    switch (action) {
-      case "navigate": {
-        if (!params.url) {
-          throw new Error("action navigate requiere url");
+    const validationError = (message: string): BrowserError => {
+      const url = BrowserController.currentUrl;
+      return new BrowserError({
+        operation: action,
+        url,
+        originalMessage: message
+      });
+    };
+
+    try {
+      switch (action) {
+        case "navigate": {
+          if (!params.url) {
+            throw validationError("action navigate requiere url");
+          }
+          return await BrowserController.goto(params.url as string);
         }
-        return await BrowserController.goto(params.url as string);
-      }
-      case "screenshot": {
-        return await BrowserController.screenshot();
-      }
-      case "findCoordinates": {
-        if (!params.text && !params.placeholder && !params.targetColor) {
-          throw new Error("action findCoordinates requiere text, placeholder o targetColor");
+        case "screenshot": {
+          return await BrowserController.screenshot();
         }
-        const coords = await BrowserController.findVisualCoordinates({
-          text: params.text as string | undefined,
-          placeholder: params.placeholder as string | undefined,
-          targetColor: params.targetColor as string | undefined
-        });
-        if (!coords) {
-          return {
-            success: false,
-            found: false,
-            error: `Elemento visual no encontrado en pantalla: "${params.text || params.placeholder || params.targetColor}"`
-          };
+        case "findCoordinates": {
+          if (!params.text && !params.placeholder && !params.targetColor) {
+            throw validationError("action findCoordinates requiere text, placeholder o targetColor");
+          }
+          const coords = await BrowserController.findVisualCoordinates({
+            text: params.text as string | undefined,
+            placeholder: params.placeholder as string | undefined,
+            targetColor: params.targetColor as string | undefined
+          });
+          if (!coords) {
+            return {
+              success: false,
+              found: false,
+              error: `Elemento visual no encontrado en pantalla: "${params.text || params.placeholder || params.targetColor}"`
+            };
+          }
+          return { success: true, found: true, x: coords.x, y: coords.y };
         }
-        return { success: true, found: true, x: coords.x, y: coords.y };
-      }
-      case "mouseWheel": {
-        return await BrowserController.mouseWheel(typeof params.deltaY === "number" ? params.deltaY : 300);
-      }
-      case "mouseMove": {
-        if (typeof params.x !== "number" || typeof params.y !== "number") {
-          throw new Error("action mouseMove requiere x e y numéricos");
+        case "mouseWheel": {
+          return await BrowserController.mouseWheel(typeof params.deltaY === "number" ? params.deltaY : 300);
         }
-        return await BrowserController.mouseMove(params.x, params.y, { human: params.human as boolean | undefined });
-      }
-      case "mouseClick": {
-        if (typeof params.x !== "number" || typeof params.y !== "number") {
-          throw new Error("action mouseClick requiere x e y numéricos");
+        case "mouseMove": {
+          if (typeof params.x !== "number" || typeof params.y !== "number") {
+            throw validationError("action mouseMove requiere x e y numéricos");
+          }
+          return await BrowserController.mouseMove(params.x, params.y, { human: params.human as boolean | undefined });
         }
-        return await BrowserController.mouseClick(params.x, params.y, { human: params.human as boolean | undefined });
-      }
-      case "mouseDoubleClick": {
-        if (typeof params.x !== "number" || typeof params.y !== "number") {
-          throw new Error("action mouseDoubleClick requiere x e y numéricos");
+        case "mouseClick": {
+          if (typeof params.x !== "number" || typeof params.y !== "number") {
+            throw validationError("action mouseClick requiere x e y numéricos");
+          }
+          return await BrowserController.mouseClick(params.x, params.y, { human: params.human as boolean | undefined });
         }
-        return await BrowserController.mouseDoubleClick(params.x, params.y);
-      }
-      case "type": {
-        if (typeof params.value !== "string") {
-          throw new Error("action type requiere value");
+        case "mouseDoubleClick": {
+          if (typeof params.x !== "number" || typeof params.y !== "number") {
+            throw validationError("action mouseDoubleClick requiere x e y numéricos");
+          }
+          return await BrowserController.mouseDoubleClick(params.x, params.y);
         }
-        return await BrowserController.type(params.value, {
-          human: params.human as boolean | undefined,
-          ...(params.options as object || {})
-        });
-      }
-      case "pressKey": {
-        if (!params.key) {
-          throw new Error("action pressKey requiere key");
+        case "type": {
+          if (typeof params.value !== "string") {
+            throw validationError("action type requiere value");
+          }
+          return await BrowserController.type(params.value, {
+            human: params.human as boolean | undefined,
+            ...(params.options as object || {})
+          });
         }
-        return await BrowserController.pressKey(params.key as string);
-      }
-      case "pressKeyHuman": {
-        if (!params.key) {
-          throw new Error("action pressKeyHuman requiere key");
+        case "pressKey": {
+          if (!params.key) {
+            throw validationError("action pressKey requiere key");
+          }
+          return await BrowserController.pressKey(params.key as string);
         }
-        return await BrowserController.pressKeyHuman(params.key as string);
+        case "pressKeyHuman": {
+          if (!params.key) {
+            throw validationError("action pressKeyHuman requiere key");
+          }
+          return await BrowserController.pressKeyHuman(params.key as string);
+        }
+        case "title": {
+          return await BrowserController.getTitle();
+        }
+        case "url": {
+          return await BrowserController.getUrl();
+        }
+        case "pageText": {
+          return await BrowserController.getPageText();
+        }
+        case "close": {
+          return await BrowserController.close();
+        }
+        case "stop": {
+          return await BrowserController.stop();
+        }
+        default:
+          throw validationError(`Acción de browser no soportada: ${action}`);
       }
-      case "title": {
-        return await BrowserController.getTitle();
-      }
-      case "url": {
-        return await BrowserController.getUrl();
-      }
-      case "pageText": {
-        return await BrowserController.getPageText();
-      }
-      case "close": {
-        return await BrowserController.close();
-      }
-      case "stop": {
-        return await BrowserController.stop();
-      }
-      default:
-        throw new Error(`Acción de browser no soportada: ${action}`);
+    } catch (error) {
+      const browserError = toBrowserError(action, BrowserController.currentUrl, error);
+      return {
+        success: false,
+        error: browserError.message,
+        errorDetail: browserError.toDetail()
+      } satisfies BrowserErrorOutput;
     }
   }
 };

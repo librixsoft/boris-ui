@@ -1,7 +1,6 @@
 import { ipcMain, IpcMainInvokeEvent } from "electron";
 import { listTools, executeTool, Tool } from "./tools/registry";
 import { execute as executeLogSession } from "./tools/logSession";
-import BrowserController from "./browser/BrowserController";
 
 export interface LLMConfig {
   baseUrl: string;
@@ -407,6 +406,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           if (controller.signal.aborted) break;
 
           const toolDuration = Date.now() - toolStart;
+          const errorDetail = (result as { errorDetail?: Record<string, unknown> }).errorDetail;
 
           await executeLogSession({
             action: "append",
@@ -415,14 +415,20 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
               type: "Tool Call",
               name: call.name,
               input: call.args,
-              output: result.success ? { success: true, path: result.path } : { success: false, error: result.error },
+              output: result.success
+                ? { success: true, path: result.path }
+                : { success: false, error: result.error, errorDetail },
               duration: toolDuration,
               status: result.success ? "success" : "error"
             }
           });
 
           const success = result.success !== false;
-          let toolResultPayload: Record<string, unknown> = success ? { path: result.path } : { error: result.error };
+          let toolResultPayload: Record<string, unknown> = success
+            ? { path: result.path }
+            : errorDetail
+              ? { error: result.error, errorDetail }
+              : { error: result.error };
           let enrichmentChunk = "";
 
           if (call.name === "browser" && success) {
@@ -535,7 +541,6 @@ async function abortChatCompletion(_event: IpcMainInvokeEvent, payload: { reques
   if (controller) {
     controller.abort();
   }
-  await BrowserController.stop();
 }
 
 export function registerLlmIpc(): void {
