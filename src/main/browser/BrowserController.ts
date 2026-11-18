@@ -1,4 +1,5 @@
-import { chromium, Browser, Page } from "playwright";
+import { BrowserContext, Page } from "playwright";
+import { launchHumanContext } from "./human/session";
 
 export interface BrowserResult {
   success: boolean;
@@ -15,27 +16,44 @@ export interface BrowserResult {
 }
 
 class BrowserController {
-  private playwright: Browser | null = null;
-  private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
   private page: Page | null = null;
   private _launched = false;
   private _aborted = false;
+  private _profileDir: string;
+
+  constructor(profileDir?: string) {
+    this._profileDir = profileDir ?? "";
+  }
 
   private async _ensureLaunched(): Promise<void> {
     if (this._launched) return;
 
-    this.playwright = await chromium.launch({ headless: false });
-    this.browser = this.playwright;
+    if (!this._profileDir) {
+      this.context = await launchHumanContext(this._getDefaultProfileDir());
+    } else {
+      this.context = await launchHumanContext(this._profileDir);
+    }
     this._launched = true;
+  }
+
+  private _getDefaultProfileDir(): string {
+    const os = require("node:os");
+    const path = require("node:path");
+    return path.join(os.tmpdir(), "boris-profile");
   }
 
   private async ensurePage(): Promise<Page> {
     if (!this.page) {
-      if (!this.browser) {
+      if (!this.context) {
         throw new Error("Browser no lanzado");
       }
-      this.page = await this.browser.newPage();
-      await this.page.setViewportSize({ width: 1280, height: 800 });
+      const pages = this.context.pages();
+      if (pages.length > 0) {
+        this.page = pages[0];
+      } else {
+        this.page = await this.context.newPage();
+      }
     }
     return this.page;
   }
@@ -341,11 +359,10 @@ class BrowserController {
         await this.page.close().catch(() => {});
         this.page = null;
       }
-      if (this.browser) {
-        await this.browser.close().catch(() => {});
-        this.browser = null;
+      if (this.context) {
+        await this.context.close().catch(() => {});
+        this.context = null;
       }
-      this.playwright = null;
       this._launched = false;
       return { success: true };
     } finally {

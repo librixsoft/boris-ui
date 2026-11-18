@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boris Detector</title>
+<style>
+body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #e0e0e0; }
+#output { white-space: pre-wrap; background: #16213e; padding: 15px; border-radius: 4px; margin-top: 10px; min-height: 200px; }
+button { padding: 10px 20px; font-size: 14px; cursor: pointer; margin: 5px; }
+</style>
+</head>
+<body>
+<h1>Boris Detection Fixture</h1>
+<p>Perform actions (mousemove, type, click, wheel) then click "Run Detection".</p>
+<button id="runBtn">Run Detection</button>
+<button id="resetBtn">Reset Detector</button>
+<div id="output">Click "Run Detection" to see scores...</div>
+
+<script>
+// FNV-1a hash
+function fnv1a(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+    h = h >>> 0;
+  }
+  return h;
+}
+
+function fnv1aBytes(bytes) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
+    h = Math.imul(h, 16777619);
+    h = h >>> 0;
+  }
+  return h;
+}
+
+function toHex(n) {
+  return (n >>> 0).toString(16).padStart(8, "0");
+}
+
+// Stats helpers
+function mean(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
+function stddev(arr) {
+  const m = mean(arr);
+  return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
+}
+function cv(arr) {
+  const m = mean(arr);
+  if (m === 0) return 0;
+  return stddev(arr) / m;
+}
+
+// Collectors
+let mouseData = { points: [], timestamps: [] };
+let keyboardData = { keydowns: 0, keyups: 0, inputEvents: 0, intervals: [], shiftCount: 0, lastKeyTime: 0, chars: [] };
+let clickData = { count: 0, offsets: [], holds: [], trusted: [], eventOrder: [] };
+let wheelData = { deltas: [], pauses: [] };
+let pageLoadTime = 0;
+
+function resetCollectors() {
+  mouseData = { points: [], timestamps: [] };
+  keyboardData = { keydowns: 0, keyups: 0, inputEvents: 0, intervals: [], shiftCount: 0, lastKeyTime: 0, chars: [] };
+  clickData = { count: 0, offsets: [], holds: [], trusted: [], eventOrder: [] };
+  wheelData = { deltas: [], pauses: [] };
+  pageLoadTime = performance.now();
+}
+
+// Mouse tracking
+document.addEventListener("mousemove", (e) => {
+  const now = performance.now();
+  mouseData.points.push({ x: e.clientX, y: e.clientY });
+  mouseData.timestamps.push(now);
+});
+
+// Keyboard tracking
+document.addEventListener("keydown", (e) => {
+  keyboardData.keydowns++;
+  const now = performance.now();
+  if (keyboardData.lastKeyTime > 0) {
+    keyboardData.intervals.push(now - keyboardData.lastKeyTime);
+  }
+  keyboardData.lastKeyTime = now;
+  if (e.key === "Shift") keyboardData.shiftCount++;
+  if (e.key.length === 1 && !e.ctrlKey && !e.altKey) {
+    keyboardData.chars.push(e.key);
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  keyboardData.keyups++;
+});
+
+document.addEventListener("input", () => {
+  keyboardData.inputEvents++;
+});
+
+// Click tracking
+let pointerDownTime = 0;
+let pointerDownX = 0;
+let pointerDownY = 0;
+document.addEventListener("pointerdown", (e) => {
+  pointerDownTime = performance.now();
+  pointerDownX = e.clientX;
+  pointerDownY = e.clientY;
+  clickData.eventOrder.push("pointerdown");
+});
+
+document.addEventListener("pointerup", (e) => {
+  const hold = performance.now() - pointerDownTime;
+  clickData.holds.push(hold);
+  clickData.eventOrder.push("pointerup");
+});
+
+document.addEventListener("click", (e) => {
+  clickData.count++;
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 2;
+  clickData.offsets.push(Math.sqrt((e.clientX - cx) ** 2 + (e.clientY - cy) ** 2));
+  clickData.trusted.push(e.isTrusted);
+  clickData.eventOrder.push("click");
+});
+
+// Wheel tracking
+let lastWheelTime = 0;
+document.addEventListener("wheel", (e) => {
+  const now = performance.now();
+  if (lastWheelTime > 0) {
+    wheelData.pauses.push(now - lastWheelTime);
+  }
+  wheelData.deltas.push(e.deltaY);
+  lastWheelTime = now;
+});
+
+// Canvas hash
+function computeCanvasHash() {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 200;
+    canvas.height = 50;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "00000000";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, 200, 50);
+    ctx.fillStyle = "#000000";
+    ctx.font = "16px sans-serif";
+    ctx.fillText("Boris detector", 10, 32);
+    const dataUrl = canvas.toDataURL();
+    return toHex(fnv1a(dataUrl));
+  } catch {
+    return "00000000";
+  }
+}
+
+// Audio hash
+function computeAudioHash() {
+  try {
+    const AudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!AudioContext) return "00000000";
+    const ctx = new AudioContext(1, 1024, 44100);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 440;
+    gain.gain.value = 0.1;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(0);
+    return ctx.startRendering().then((buffer) => {
+      const channelData = buffer.getChannelData(0);
+      const bytes = new Uint8Array(channelData.length);
+      for (let i = 0; i < channelData.length; i++) {
+        bytes[i] = Math.floor(channelData[i] * 128) & 0xff;
+      }
+      return toHex(fnv1aBytes(bytes));
+    }).catch(() => "00000000");
+  } catch {
+    return Promise.resolve("00000000");
+  }
+}
+
+// WebGL
+function getWebGLInfo() {
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (!gl) return { vendor: null, renderer: null };
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    if (!ext) return { vendor: null, renderer: null };
+    return {
+      vendor: gl.getParameter(ext.UNMASKED_VENDOR_WEBGL),
+      renderer: gl.getParameter(ext.UNMASKED_RENDERER_WEBGL),
+    };
+  } catch {
+    return { vendor: null, renderer: null };
+  }
+}
+
+// Normalize signal to 0-1 score (higher = more automated)
+function normalizeMouseScore(data) {
+  let score = 0;
+  if (!data || !data.points) return 0;
+  // First event at (0,0) is suspicious
+  if (data.points.length > 0) {
+    const first = data.points[0];
+    if (first.x < 5 && first.y < 5) score += 0.3;
+  }
+  // Speed CV near 0 is suspicious
+  if (data.timestamps.length > 2) {
+    const speeds = [];
+    for (let i = 1; i < data.timestamps.length; i++) {
+      const dt = (data.timestamps[i] - data.timestamps[i - 1]) / 1000;
+      if (dt > 0) {
+        const dx = data.points[i].x - data.points[i - 1].x;
+        const dy = data.points[i].y - data.points[i - 1].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        speeds.push(dist / dt);
+      }
+    }
+    if (speeds.length > 1) {
+      const cvVal = cv(speeds);
+      if (cvVal < 0.05) score += 0.3;
+      else if (cvVal < 0.15) score += 0.15;
+    }
+  }
+  // Path/straight ratio near 1.0 is suspicious
+  if (data.points.length > 2) {
+    const first = data.points[0];
+    const last = data.points[data.points.length - 1];
+    const straight = Math.sqrt((last.x - first.x) ** 2 + (last.y - first.y) ** 2);
+    let pathLen = 0;
+    for (let i = 1; i < data.points.length; i++) {
+      const dx = data.points[i].x - data.points[i - 1].x;
+      const dy = data.points[i].y - data.points[i - 1].y;
+      pathLen += Math.sqrt(dx * dx + dy * dy);
+    }
+    if (straight > 0) {
+      const ratio = pathLen / straight;
+      if (ratio < 1.05) score += 0.3;
+      else if (ratio < 1.15) score += 0.15;
+    }
+  }
+  return Math.min(score, 1);
+}
+
+function normalizeKeyboardScore(data) {
+  let score = 0;
+  if (!data) return 0;
+  // Interval CV near 0 is suspicious
+  if (data.intervals && data.intervals.length > 1) {
+    const cvVal = cv(data.intervals);
+    if (cvVal < 0.1) score += 0.4;
+    else if (cvVal < 0.2) score += 0.2;
+  }
+  // No keydown per char detection
+  if (data.chars && data.chars.length > 0) {
+    const ratio = data.keydowns / data.chars.length;
+    if (ratio < 0.5) score += 0.3; // likely using insertText
+  }
+  // Uniform bursts
+  if (data.intervals && data.intervals.length > 5) {
+    const bursts = data.intervals.filter(i => i < 55).length;
+    const burstRate = bursts / data.intervals.length;
+    if (burstRate < 0.02) score += 0.3; // no bursts
+  }
+  return Math.min(score, 1);
+}
+
+function normalizeClickScore(data) {
+  let score = 0;
+  if (!data) return 0;
+  // All clicks at center
+  if (data.offsets && data.offsets.length > 0) {
+    const avgOffset = mean(data.offsets);
+    if (avgOffset < 3) score += 0.3;
+  }
+  // isTrusted false
+  if (data.trusted.length > 0) {
+    const trustedCount = data.trusted.filter(t => t).length;
+    if (trustedCount / data.trusted.length < 0.5) score += 0.3;
+  }
+  // Uniform holds
+  if (data.holds.length > 1) {
+    const cvVal = cv(data.holds);
+    if (cvVal < 0.1) score += 0.2;
+  }
+  // Event order
+  const hasClickOrder = data.eventOrder.includes("pointerdown") && data.eventOrder.includes("click");
+  if (!hasClickOrder && data.count > 0) score += 0.2;
+  return Math.min(score, 1);
+}
+
+function normalizeWheelScore(data) {
+  let score = 0;
+  if (!data) return 0;
+  if (data.deltas && data.deltas.length > 1) {
+    const cvVal = cv(data.deltas);
+    if (cvVal < 0.1) score += 0.4;
+    else if (cvVal < 0.3) score += 0.2;
+  }
+  if (data.pauses.length > 1) {
+    const cvVal = cv(data.pauses);
+    if (cvVal < 0.1) score += 0.3;
+  }
+  // Uniform deltas
+  if (data.deltas.length > 2) {
+    const uniqueDeltas = new Set(data.deltas.map(d => Math.round(d)));
+    if (uniqueDeltas.size <= 2) score += 0.3;
+  }
+  return Math.min(score, 1);
+}
+
+function normalizeStaticScore(statics) {
+  let score = 0;
+  if (statics.webdriver) score += 0.3;
+  if (statics.plugins === 0) score += 0.2;
+  if (statics.innerWidth !== statics.outerWidth) {
+    const diff = Math.abs(statics.innerWidth - statics.outerWidth);
+    if (diff > 100) score += 0.15;
+  }
+  if (statics.canvasHash === "00000000") score += 0.1;
+  if (statics.audioHash === "00000000") score += 0.1;
+  if (statics.webglVendor === null) score += 0.1;
+  return Math.min(score, 1);
+}
+
+// Main detection function
+window.__detect = async function() {
+  const statics = {
+    webdriver: navigator.webdriver === true,
+    uaBrands: navigator.userAgentData ? navigator.userAgentData.brands : null,
+    plugins: navigator.plugins ? navigator.plugins.length : 0,
+    languages: navigator.languages ? Array.from(navigator.languages) : [],
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    innerWidth: window.innerWidth,
+    outerWidth: window.outerWidth,
+    dpr: window.devicePixelRatio || 1,
+    webglVendor: null,
+    webglRenderer: null,
+    canvasHash: computeCanvasHash(),
+    audioHash: "pending",
+  };
+
+  const webgl = getWebGLInfo();
+  statics.webglVendor = webgl.vendor;
+  statics.webglRenderer = webgl.renderer;
+
+  const audioHash = await computeAudioHash();
+  statics.audioHash = audioHash;
+
+  // Mouse analysis
+  const mousePoints = mouseData.points;
+  let firstX = null, firstY = null;
+  let pathLength = 0, straightDistance = 0, maxDeviation = 0;
+  let speedCv = 0;
+
+  if (mousePoints.length > 0) {
+    firstX = mousePoints[0].x;
+    firstY = mousePoints[0].y;
+
+    if (mousePoints.length > 1) {
+      const last = mousePoints[mousePoints.length - 1];
+      straightDistance = Math.sqrt((last.x - mousePoints[0].x) ** 2 + (last.y - mousePoints[0].y) ** 2);
+
+      for (let i = 1; i < mousePoints.length; i++) {
+        const dx = mousePoints[i].x - mousePoints[i - 1].x;
+        const dy = mousePoints[i].y - mousePoints[i - 1].y;
+        pathLength += Math.sqrt(dx * dx + dy * dy);
+
+        // Max deviation from line
+        if (i < mousePoints.length - 1) {
+          const segX = last.x - mousePoints[0].x;
+          const segY = last.y - mousePoints[0].y;
+          const segLen = straightDistance;
+          if (segLen > 0) {
+            const px = mousePoints[i].x - mousePoints[0].x;
+            const py = mousePoints[i].y - mousePoints[0].y;
+            const cross = Math.abs(segX * py - segY * px);
+            const dev = cross / segLen;
+            if (dev > maxDeviation) maxDeviation = dev;
+          }
+        }
+      }
+
+      // Speed CV
+      const speeds = [];
+      for (let i = 1; i < mouseData.timestamps.length; i++) {
+        const dt = (mouseData.timestamps[i] - mouseData.timestamps[i - 1]) / 1000;
+        if (dt > 0.001) {
+          const dx = mousePoints[i].x - mousePoints[i - 1].x;
+          const dy = mousePoints[i].y - mousePoints[i - 1].y;
+          speeds.push(Math.sqrt(dx * dx + dy * dy) / dt);
+        }
+      }
+      if (speeds.length > 1) speedCv = cv(speeds);
+    }
+  }
+
+  const mouse = {
+    count: mousePoints.length,
+    durationMs: mouseData.timestamps.length > 0 ? mouseData.timestamps[mouseData.timestamps.length - 1] - mouseData.timestamps[0] : 0,
+    pathLength: Math.round(pathLength * 100) / 100,
+    straightDistance: Math.round(straightDistance * 100) / 100,
+    maxDeviation: Math.round(maxDeviation * 100) / 100,
+    speedCv: Math.round(speedCv * 1000) / 1000,
+    firstX,
+    firstY,
+    movementX: mousePoints.length > 1 ? mousePoints[mousePoints.length - 1].x - mousePoints[0].x : 0,
+    movementY: mousePoints.length > 1 ? mousePoints[mousePoints.length - 1].y - mousePoints[0].y : 0,
+  };
+
+  const keyboard = {
+    keydowns: keyboardData.keydowns,
+    keyups: keyboardData.keyups,
+    inputEvents: keyboardData.inputEvents,
+    intervals: keyboardData.intervals,
+    intervalCv: keyboardData.intervals.length > 1 ? cv(keyboardData.intervals) : 0,
+    bursts: keyboardData.intervals.filter(i => i < 55).length,
+    shiftCount: keyboardData.shiftCount,
+    keydownPerCharRatio: keyboardData.chars.length > 0 ? keyboardData.keydowns / keyboardData.chars.length : 0,
+  };
+
+  const click = {
+    count: clickData.count,
+    offsets: clickData.offsets,
+    holds: clickData.holds,
+    trusted: clickData.trusted,
+    eventOrder: clickData.eventOrder,
+  };
+
+  const wheel = {
+    deltas: wheelData.deltas,
+    deltaCv: wheelData.deltas.length > 1 ? cv(wheelData.deltas) : 0,
+    pauses: wheelData.pauses,
+  };
+
+  // Compute scores
+  const staticScore = normalizeStaticScore(statics);
+  const mouseScore = normalizeMouseScore(mouseData);
+  const keyboardScore = normalizeKeyboardScore(keyboard);
+  const clickScore = normalizeClickScore(click);
+  const wheelScore = normalizeWheelScore(wheel);
+
+  const totalScore = Math.round(
+    staticScore * 0.30 +
+    mouseScore * 0.20 +
+    keyboardScore * 0.25 +
+    clickScore * 0.10 +
+    wheelScore * 0.15
+  ) * 100;
+
+  const detection = {
+    static: statics,
+    mouse,
+    keyboard,
+    click,
+    wheel,
+    _scores: {
+      static: Math.round(staticScore * 100) / 100,
+      mouse: Math.round(mouseScore * 100) / 100,
+      keyboard: Math.round(keyboardScore * 100) / 100,
+      click: Math.round(clickScore * 100) / 100,
+      wheel: Math.round(wheelScore * 100) / 100,
+      total: Math.round(totalScore) / 100,
+    },
+  };
+
+  return detection;
+};
+
+window.__resetDetector = function() {
+  resetCollectors();
+  document.getElementById("output").textContent = "Detector reset. Perform actions and run detection again.";
+};
+
+// Run button
+document.getElementById("runBtn").addEventListener("click", async () => {
+  const output = document.getElementById("output");
+  output.textContent = "Running detection...";
+
+  const detection = await window.__detect();
+  const s = detection._scores;
+
+  output.textContent =
+`=== Boris Detection Report ===
+
+STATIC SIGNALS (weight: 30%)
+  webdriver: ${detection.static.webdriver}
+  uaBrands: ${JSON.stringify(detection.static.uaBrands)}
+  plugins: ${detection.static.plugins}
+  languages: ${JSON.stringify(detection.static.languages)}
+  timezone: ${detection.static.timezone}
+  innerWidth: ${detection.static.innerWidth} / outerWidth: ${detection.static.outerWidth}
+  dpr: ${detection.static.dpr}
+  webglVendor: ${detection.static.webglVendor}
+  webglRenderer: ${detection.static.webglRenderer}
+  canvasHash: ${detection.static.canvasHash}
+  audioHash: ${detection.static.audioHash}
+  Score: ${s.static}
+
+MOUSE SIGNALS (weight: 20%)
+  count: ${detection.mouse.count}
+  first event: (${detection.mouse.firstX}, ${detection.mouse.firstY})
+  pathLength: ${detection.mouse.pathLength}
+  straightDistance: ${detection.mouse.straightDistance}
+  maxDeviation: ${detection.mouse.maxDeviation}
+  speedCv: ${detection.mouse.speedCv}
+  Score: ${s.mouse}
+
+KEYBOARD SIGNALS (weight: 25%)
+  keydowns: ${detection.keyboard.keydowns}
+  keyups: ${detection.keyboard.keyups}
+  inputEvents: ${detection.keyboard.inputEvents}
+  intervalCv: ${detection.keyboard.intervalCv}
+  bursts: ${detection.keyboard.bursts}
+  shiftCount: ${detection.keyboard.shiftCount}
+  keydownPerCharRatio: ${detection.keyboard.keydownPerCharRatio}
+  Score: ${s.keyboard}
+
+CLICK SIGNALS (weight: 10%)
+  count: ${detection.click.count}
+  avgOffset: ${detection.click.offsets.length > 0 ? (detection.click.offsets.reduce((a, b) => a + b, 0) / detection.click.offsets.length).toFixed(2) : "N/A"}
+  trusted: ${detection.click.trusted.filter(t => t).length}/${detection.click.trusted.length}
+  Score: ${s.click}
+
+WHEEL SIGNALS (weight: 15%)
+  deltas: ${detection.wheel.deltas.length}
+  deltaCv: ${detection.wheel.deltaCv}
+  pauses: ${detection.wheel.pauses.length}
+  Score: ${s.wheel}
+
+=== TOTAL HUMANESS SCORE: ${100 - s.total} / 100 ===
+(Higher = more human-like, lower = more automated)
+`;
+});
+
+// Reset button
+document.getElementById("resetBtn").addEventListener("click", () => {
+  window.__resetDetector();
+});
+
+// Initialize
+resetCollectors();
+</script>
+</body>
+</html>
