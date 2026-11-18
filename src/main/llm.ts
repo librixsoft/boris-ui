@@ -342,21 +342,18 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           let enrichmentChunk = "";
 
           if (call.name === "browser" && success) {
-            const browserResult = result as { url?: string; selector?: string; value?: string; text?: string; screenshot?: string; title?: string; key?: string; query?: string; found?: boolean };
+            const browserResult = result as { url?: string; value?: string; text?: string; screenshot?: string; title?: string; key?: string; x?: number; y?: number };
             if (browserResult.url) {
               enrichmentChunk += `URL: ${browserResult.url}\n`;
             }
             if (browserResult.title) {
               enrichmentChunk += `Título: ${browserResult.title}\n`;
             }
-            if (browserResult.selector) {
-              enrichmentChunk += `Selector: ${browserResult.selector}\n`;
+            if (browserResult.x !== undefined && browserResult.y !== undefined) {
+              enrichmentChunk += `Coordenadas: (${browserResult.x}, ${browserResult.y})\n`;
             }
             if (browserResult.key) {
               enrichmentChunk += `Tecla: ${browserResult.key}\n`;
-            }
-            if (browserResult.query !== undefined) {
-              enrichmentChunk += `Búsqueda "${browserResult.query}": ${browserResult.found ? "encontrado" : "no encontrado"}\n`;
             }
             if (browserResult.text && browserResult.text.length > 0) {
               const truncated = browserResult.text.length > 500 ? browserResult.text.slice(0, 500) + "..." : browserResult.text;
@@ -377,7 +374,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
 
           currentMessages.push({
             role: "user",
-            content: `Resultado de ${call.name}: ${JSON.stringify(result)}`
+            content: `Resultado de ${call.name}: ${JSON.stringify(call.name === "browser" ? toolResultPayload : result)}`
           });
         }
 

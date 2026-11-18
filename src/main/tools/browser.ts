@@ -1,54 +1,107 @@
 import BrowserController from "../browser/BrowserController";
 import { Tool } from "./registry";
 
-type BrowserAction = "navigate" | "click" | "clickHuman" | "fill" | "fillHuman" | "extract" | "close" | "pressKey" | "pressKeyHuman" | "search" | "screenshot" | "title" | "url";
+type BrowserAction =
+  | "navigate"
+  | "screenshot"
+  | "findCoordinates"
+  | "mouseMove"
+  | "mouseClick"
+  | "mouseDoubleClick"
+  | "type"
+  | "pressKey"
+  | "pressKeyHuman"
+  | "title"
+  | "url"
+  | "pageText"
+  | "close";
 
 interface BrowserParams {
   action: BrowserAction;
   url?: string;
-  selector?: string;
   value?: string;
   key?: string;
-  query?: string;
+  x?: number;
+  y?: number;
+  human?: boolean;
+  targetColor?: string;
+  options?: {
+    mistakes?: boolean;
+    mistakesCount?: number;
+    typingSpeed?: { min: number; max: number };
+  };
 }
 
 const tool: Tool = {
   name: "browser",
   description:
-    "Navegación web visible. Abre un navegador en ventana visible y permite ir a una URL, hacer clic (normal o humano), rellenar campos (normal o humano), extraer texto, presionar teclas (normal o humano), buscar en la página, capturar pantalla y obtener título/URL. La ventana se mantiene abierta hasta que se cierra. Las acciones 'Human' simulan comportamiento humano: clickHuman mueve el mouse antes de click, fillHuman escribe letra por letra con errores aleatorios, pressKeyHuman tiene retraso humano.",
+    "Navegación web visible y automatización basada exclusivamente en capturas de pantalla, visión y coordenadas (X, Y). Permite visitar una URL, tomar capturas de pantalla, localizar coordenadas de elementos visuales, mover el cursor físico, hacer clic en coordenadas, teclear texto con pulsaciones humanas, presionar teclas y leer texto de la página. No utiliza selectores HTML.",
   schema: {
     type: "object",
     properties: {
       action: {
         type: "string",
-        enum: ["navigate", "click", "clickHuman", "fill", "fillHuman", "extract", "close", "pressKey", "pressKeyHuman", "search", "screenshot", "title", "url"],
-        description: "Acción de navegación a ejecutar"
+        enum: [
+          "navigate",
+          "screenshot",
+          "findCoordinates",
+          "mouseMove",
+          "mouseClick",
+          "mouseDoubleClick",
+          "type",
+          "pressKey",
+          "pressKeyHuman",
+          "title",
+          "url",
+          "pageText",
+          "close"
+        ],
+        description: "Acción visual o de interacción por coordenadas a ejecutar"
       },
       url: {
         type: "string",
         description: "URL a visitar (requerido para action navigate)"
       },
-      selector: {
-        type: "string",
-        description: "Selector CSS del elemento (requerido para click/fill/extract)"
-      },
       value: {
         type: "string",
-        description: "Valor a escribir (requerido para action fill)"
+        description: "Texto a escribir con el teclado (requerido para action type)"
       },
       key: {
         type: "string",
-        description: "Tecla a presionar (requerido para action pressKey). Ej: Enter, Tab, Escape, Backspace"
+        description: "Tecla a presionar (requerido para action pressKey o pressKeyHuman). Ej: Enter, Tab, Escape, Backspace"
       },
-      query: {
+      x: {
+        type: "number",
+        description: "Coordenada horizontal X en píxeles (para mouseMove o mouseClick)"
+      },
+      y: {
+        type: "number",
+        description: "Coordenada vertical Y en píxeles (para mouseMove o mouseClick)"
+      },
+      human: {
+        type: "boolean",
+        description: "Simular movimiento o retardo humano natural"
+      },
+      targetColor: {
         type: "string",
-        description: "Texto a buscar en la página (requerido para action search)"
+        description: "Color hexadecimal (ej: #2563eb) a localizar en la captura para findCoordinates"
       }
     },
     required: ["action"],
     additionalProperties: false
   },
-  async execute(params: Record<string, unknown>): Promise<{ success: boolean; url?: string; selector?: string; value?: string; text?: string; error?: string; screenshot?: string; title?: string; key?: string; query?: string; found?: boolean }> {
+  async execute(params: Record<string, unknown>): Promise<{
+    success: boolean;
+    url?: string;
+    value?: string;
+    text?: string;
+    error?: string;
+    screenshot?: string;
+    title?: string;
+    key?: string;
+    x?: number;
+    y?: number;
+  }> {
     const action = params.action as BrowserAction;
 
     switch (action) {
@@ -58,38 +111,46 @@ const tool: Tool = {
         }
         return await BrowserController.goto(params.url as string);
       }
-      case "click": {
-        if (!params.selector) {
-          throw new Error("action click requiere selector");
-        }
-        return await BrowserController.click(params.selector as string);
+      case "screenshot": {
+        return await BrowserController.screenshot();
       }
-      case "clickHuman": {
-        if (!params.selector) {
-          throw new Error("action clickHuman requiere selector");
+      case "findCoordinates": {
+        if (!params.targetColor) {
+          throw new Error("action findCoordinates requiere targetColor");
         }
-        return await BrowserController.clickHuman(params.selector as string);
-      }
-      case "fill": {
-        if (!params.selector || !params.value) {
-          throw new Error("action fill requiere selector y value");
+        const ss = await BrowserController.screenshot();
+        const coords = await BrowserController.findCoordinatesFromScreenshot(ss.screenshot!, params.targetColor as string);
+        if (!coords) {
+          return { success: false, error: "Color no encontrado en la captura" };
         }
-        return await BrowserController.fill(params.selector as string, params.value as string);
+        return { success: true, x: coords.x, y: coords.y };
       }
-      case "fillHuman": {
-        if (!params.selector || !params.value) {
-          throw new Error("action fillHuman requiere selector y value");
+      case "mouseMove": {
+        if (typeof params.x !== "number" || typeof params.y !== "number") {
+          throw new Error("action mouseMove requiere x e y numéricos");
         }
-        return await BrowserController.fillHuman(params.selector as string, params.value as string);
+        return await BrowserController.mouseMove(params.x, params.y, { human: params.human as boolean | undefined });
       }
-      case "extract": {
-        if (!params.selector) {
-          throw new Error("action extract requiere selector");
+      case "mouseClick": {
+        if (typeof params.x !== "number" || typeof params.y !== "number") {
+          throw new Error("action mouseClick requiere x e y numéricos");
         }
-        return await BrowserController.extract(params.selector as string);
+        return await BrowserController.mouseClick(params.x, params.y, { human: params.human as boolean | undefined });
       }
-      case "close": {
-        return await BrowserController.close();
+      case "mouseDoubleClick": {
+        if (typeof params.x !== "number" || typeof params.y !== "number") {
+          throw new Error("action mouseDoubleClick requiere x e y numéricos");
+        }
+        return await BrowserController.mouseDoubleClick(params.x, params.y);
+      }
+      case "type": {
+        if (typeof params.value !== "string") {
+          throw new Error("action type requiere value");
+        }
+        return await BrowserController.type(params.value, {
+          human: params.human as boolean | undefined,
+          ...(params.options as object || {})
+        });
       }
       case "pressKey": {
         if (!params.key) {
@@ -103,20 +164,17 @@ const tool: Tool = {
         }
         return await BrowserController.pressKeyHuman(params.key as string);
       }
-      case "search": {
-        if (!params.query) {
-          throw new Error("action search requiere query");
-        }
-        return await BrowserController.search(params.query as string);
-      }
-      case "screenshot": {
-        return await BrowserController.screenshot();
-      }
       case "title": {
         return await BrowserController.getTitle();
       }
       case "url": {
         return await BrowserController.getUrl();
+      }
+      case "pageText": {
+        return await BrowserController.getPageText();
+      }
+      case "close": {
+        return await BrowserController.close();
       }
       default:
         throw new Error(`Acción de browser no soportada: ${action}`);

@@ -1,355 +1,230 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { chromium, Browser, Page, BrowserContext } from "playwright";
+import { describe, it, expect, afterAll } from "vitest";
+import BrowserController from "../src/main/browser/BrowserController";
+import { execute as executeBrowserTool } from "../src/main/tools/browser";
 
-describe("Browser E2E - Comportamiento Humano", () => {
-  let browser: Browser;
-  let context: BrowserContext;
-  let page: Page;
+// Página HTML con elementos visuales reconocibles por color y coordenadas fijas/medibles
+const VISUAL_TEST_HTML = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Prueba Visual por Coordenadas</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 40px;
+      font-family: Arial, sans-serif;
+      background-color: #f8fafc;
+    }
+    .titulo {
+      font-size: 24px;
+      margin-bottom: 30px;
+      color: #0f172a;
+    }
+    /* Campo de texto con borde distintivo verde para detección visual (#10b981) */
+    .input-box {
+      width: 320px;
+      height: 48px;
+      border: 4px solid #10b981;
+      background-color: #ffffff;
+      font-size: 18px;
+      padding: 0 16px;
+      box-sizing: border-box;
+      outline: none;
+      display: block;
+      margin-bottom: 24px;
+    }
+    /* Botón con color azul primario (#2563eb) para detección en screenshot */
+    .btn-target {
+      width: 220px;
+      height: 52px;
+      background-color: #2563eb;
+      color: #ffffff;
+      border: none;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      border-radius: 6px;
+      display: block;
+    }
+    .btn-target:active {
+      background-color: #1d4ed8;
+    }
+    #estado-click {
+      margin-top: 20px;
+      font-size: 16px;
+      color: #334155;
+    }
+  </style>
+</head>
+<body>
+  <div class="titulo">Automatización por Coordenadas y Screenshots</div>
 
-  beforeAll(async () => {
-    browser = await chromium.launch({ headless: false });
-    context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-    });
-    page = await context.newPage();
-  });
+  <input type="text" id="campo-texto" class="input-box" placeholder="Haz click aquí y escribe..." oninput="document.getElementById('estado-input').textContent = this.value" />
+  <button id="boton-accion" class="btn-target" onclick="document.getElementById('estado-click').textContent = '¡Click detectado por coordenadas!'">
+    Acción Visual
+  </button>
 
+  <div id="estado-click">Esperando click...</div>
+  <div id="estado-input"></div>
+</body>
+</html>
+`;
+
+const VISUAL_PAGE_URL = `data:text/html;charset=utf-8,${encodeURIComponent(VISUAL_TEST_HTML)}`;
+
+describe("Browser E2E - Automatización basada en Screenshots y Coordenadas", () => {
   afterAll(async () => {
-    await context.close();
-    await browser.close();
+    await BrowserController.close();
   });
 
-  async function humanTyping(selector: string, text: string, options?: {
-    mistakes?: boolean;
-    mistakesCount?: number;
-    typingSpeed?: { min: number; max: number };
-  }) {
-    const element = page.locator(selector).first();
-    await element.click();
-    
-    const {
-      mistakes = true,
-      mistakesCount = 1,
-      typingSpeed = { min: 50, max: 150 }
-    } = options || {};
-
-    let currentText = "";
-    const chars = text.split("");
-    
-    for (let i = 0; i < chars.length; i++) {
-      const char = chars[i];
-      
-      // Simular error humano aleatorio
-      if (mistakes && Math.random() < 0.1 && i > 0 && mistakesCount > 0) {
-        // Escribir letra incorrecta
-        const wrongChar = String.fromCharCode(97 + Math.floor(Math.random() * 26));
-        await page.keyboard.type(wrongChar);
-        await page.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
-        
-        // Borrar el error
-        await page.keyboard.press("Backspace");
-        await page.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
-      }
-      
-      // Escribir la letra correcta
-      await page.keyboard.type(char);
-      currentText += char;
-      
-      // Variación de velocidad de escritura
-      const delay = typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min);
-      await page.waitForTimeout(delay);
-    }
-  }
-
-  async function humanClick(selector: string) {
-    const element = page.locator(selector).first();
-    
-    // Mover el mouse al elemento (simular movimiento humano)
-    const box = await element.boundingBox();
-    if (box) {
-      const x = box.x + box.width / 2 + (Math.random() - 0.5) * 10;
-      const y = box.y + box.height / 2 + (Math.random() - 0.5) * 10;
-      await page.mouse.move(x, y);
-      await page.waitForTimeout(100 + Math.random() * 200);
-    }
-    
-    // Click con ligera variación
-    await element.click();
-    await page.waitForTimeout(200 + Math.random() * 300);
-  }
-
-  async function humanScroll(direction: "down" | "up", amount: number = 300) {
-    const scrollAmount = amount + (Math.random() - 0.5) * 50;
-    if (direction === "down") {
-      await page.evaluate((pixels) => window.scrollBy(0, pixels), scrollAmount);
-    } else {
-      await page.evaluate((pixels) => window.scrollBy(0, -pixels), scrollAmount);
-    }
-    await page.waitForTimeout(300 + Math.random() * 400);
-  }
-
-  describe("Navegación básica simulando humano", () => {
-    it("debería navegar a una URL como un humano", async () => {
-      await page.goto("https://example.com", { waitUntil: "domcontentloaded" });
-      
-      // Leer el título como lo haría un humano
-      const title = await page.title();
-      expect(title).toBe("Example Domain");
-      
-      // Simular lectura del contenido
-      await page.waitForTimeout(1000 + Math.random() * 2000);
+  describe("Flujo guiado por Captura de Pantalla y Coordenadas (Sin selectores de elementos)", () => {
+    it("1. Debería navegar a la página mediante BrowserController.goto", async () => {
+      const result = await BrowserController.goto(VISUAL_PAGE_URL);
+      expect(result.success).toBe(true);
+      expect(result.url).toContain("data:text/html");
     });
 
-    it("debería hacer scroll por la página como un humano", async () => {
-      await page.goto("https://example.com");
+    it("2. Debería tomar un screenshot completo de la pantalla", async () => {
+      const result = await BrowserController.screenshot();
+      expect(result.success).toBe(true);
+      expect(result.screenshot).toBeDefined();
+      expect(typeof result.screenshot).toBe("string");
+      expect(result.screenshot!.length).toBeGreaterThan(1000);
+    });
+
+    it("3. Debería localizar las coordenadas del botón (#2563eb) a partir de la captura", async () => {
+      const ssResult = await BrowserController.screenshot();
+      const coords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#2563eb");
       
-      // Scroll hacia abajo varias veces
-      await humanScroll("down", 200);
-      await humanScroll("down", 300);
-      await humanScroll("down", 250);
+      expect(coords).not.toBeNull();
+      expect(coords!.x).toBeGreaterThan(0);
+      expect(coords!.y).toBeGreaterThan(0);
+    });
+
+    it("4. Debería mover el mouse a las coordenadas encontradas con movimiento humano", async () => {
+      const ssResult = await BrowserController.screenshot();
+      const coords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#2563eb");
+      expect(coords).not.toBeNull();
+
+      const moveResult = await BrowserController.mouseMove(coords!.x, coords!.y, { human: true, steps: 15 });
+      expect(moveResult.success).toBe(true);
+      expect(moveResult.x).toBe(coords!.x);
+      expect(moveResult.y).toBe(coords!.y);
+    });
+
+    it("5. Debería hacer click en las coordenadas del botón y activar su evento", async () => {
+      const ssResult = await BrowserController.screenshot();
+      const coords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#2563eb");
+      expect(coords).not.toBeNull();
+
+      // Click directo a nivel de coordenadas (sin pasar ningún selector)
+      const clickResult = await BrowserController.mouseClick(coords!.x, coords!.y, { human: true });
+      expect(clickResult.success).toBe(true);
+
+      // Verificar que el click se ejecutó en la interfaz
+      const pageTextResult = await BrowserController.getPageText();
+      expect(pageTextResult.text).toContain("¡Click detectado por coordenadas!");
+    });
+
+    it("6. Debería localizar las coordenadas del campo de entrada (#10b981) en la captura", async () => {
+      const ssResult = await BrowserController.screenshot();
+      const inputCoords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#10b981");
       
-      // Scroll hacia arriba un poco
-      await humanScroll("up", 150);
+      expect(inputCoords).not.toBeNull();
+      expect(inputCoords!.x).toBeGreaterThan(0);
+      expect(inputCoords!.y).toBeGreaterThan(0);
+    });
+
+    it("7. Debería hacer click en las coordenadas del input y escribir texto con teclado simulando humano", async () => {
+      const ssResult = await BrowserController.screenshot();
+      const inputCoords = await BrowserController.findCoordinatesFromScreenshot(ssResult.screenshot!, "#10b981");
+      expect(inputCoords).not.toBeNull();
+
+      // 1. Mover y hacer click en las coordenadas para darle foco
+      await BrowserController.mouseClick(inputCoords!.x, inputCoords!.y, { human: true });
+
+      // 2. Escribir mediante teclado (sin selector)
+      const textoAEscribir = "Texto por coordenadas";
+      const typeResult = await BrowserController.type(textoAEscribir, {
+        human: true,
+        mistakes: false,
+        typingSpeed: { min: 15, max: 40 }
+      });
+
+      expect(typeResult.success).toBe(true);
+      expect(typeResult.value).toBe(textoAEscribir);
+
+      // 3. Verificar que el texto está presente en la página
+      const pageTextCheck = await BrowserController.getPageText();
+      expect(pageTextCheck.text).toContain(textoAEscribir);
     });
   });
 
-  describe("Escritura simulando humano", () => {
-    it("debería escribir en un campo de texto letra por letra", async () => {
-      await page.goto("https://example.com");
-      
-      // Simular escritura humana (solo demo, example.com no tiene formularios)
-      // En un caso real: await humanTyping("input[name='search']", "hola mundo");
-      
-      // Verificar que la función de escritura existe
-      expect(typeof humanTyping).toBe("function");
+  describe("Ejecución mediante la herramienta Browser (Tool Execute)", () => {
+    it("debería ejecutar findCoordinates a través de executeBrowserTool", async () => {
+      const result = await executeBrowserTool({
+        action: "findCoordinates",
+        targetColor: "#2563eb"
+      });
+
+      expect(result.success).toBe(true);
+      expect(typeof result.x).toBe("number");
+      expect(typeof result.y).toBe("number");
     });
 
-    it("debería cometer errores y corregirlos mientras escribe", async () => {
-      const testText = "prueba de escritura";
-      
-      // Simular escritura con errores
-      const typingOptions = {
-        mistakes: true,
-        mistakesCount: 2,
-        typingSpeed: { min: 80, max: 200 }
-      };
-      
-      // En un caso real:
-      // await humanTyping("input", testText, typingOptions);
-      
-      expect(typingOptions.mistakes).toBe(true);
+    it("debería mover el mouse a coordenadas usando executeBrowserTool", async () => {
+      const result = await executeBrowserTool({
+        action: "mouseMove",
+        x: 120,
+        y: 120,
+        human: true
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.x).toBe(120);
+      expect(result.y).toBe(120);
     });
 
-    it("debería borrar texto cuando se equivoca", async () => {
-      // Simular borrar con Backspace
-      await page.keyboard.type("hola mundo");
-      await page.waitForTimeout(500);
-      
-      // Borrar las últimas 5 letras
-      for (let i = 0; i < 5; i++) {
-        await page.keyboard.press("Backspace");
-        await page.waitForTimeout(50 + Math.random() * 100);
-      }
-      
-      // Verificar que quedó "hola "
-      const selection = await page.evaluate(() => window.getSelection()?.toString());
-      expect(selection).toBe("");
-    });
-  });
+    it("debería hacer click y escribir mediante executeBrowserTool", async () => {
+      // 1. Localizar coordenadas del input
+      const coordsRes = await executeBrowserTool({
+        action: "findCoordinates",
+        targetColor: "#10b981"
+      });
+      expect(coordsRes.success).toBe(true);
 
-  describe("Clicks simulando humano", () => {
-    it("debería hacer click moviendo el mouse primero", async () => {
-      await page.goto("https://example.com");
-      
-      // Encontrar un elemento clickeable
-      const link = page.locator("a").first();
-      
-      // Simular click humano
-      // await humanClick("a");
-      
-      // Verificar que el link existe
-      const count = await link.count();
-      expect(count).toBeGreaterThan(0);
+      // 2. Click en coordenadas
+      const clickRes = await executeBrowserTool({
+        action: "mouseClick",
+        x: coordsRes.x!,
+        y: coordsRes.y!,
+        human: true
+      });
+      expect(clickRes.success).toBe(true);
+
+      // 3. Escribir texto
+      const typeRes = await executeBrowserTool({
+        action: "type",
+        value: " - Boris UI",
+        human: true
+      });
+      expect(typeRes.success).toBe(true);
     });
 
-    it("debería hacer doble click como humano", async () => {
-      await page.goto("https://example.com");
-      
-      // Esperar que la página cargue completamente
-      await page.waitForLoadState("domcontentloaded");
-      
-      // Encontrar cualquier elemento clickeable
-      const link = page.locator("a").first();
-      const count = await link.count();
-      
-      if (count > 0) {
-        // Doble click en un link
-        await link.dblclick();
-        await page.waitForTimeout(200);
-      } else {
-        // Si no hay links, verificar que la página cargó
-        const title = await page.title();
-        expect(title).toBe("Example Domain");
-      }
-    }, 60000); // 60 segundos timeout
-  });
-
-  describe("Teclas especiales simulando humano", () => {
-    it("debería presionar Enter como humano", async () => {
-      await page.goto("https://example.com");
-      
-      // Presionar Enter
-      await page.keyboard.press("Enter");
-      await page.waitForTimeout(300);
-      
-      // Verificar que no hay error
-      expect(true).toBe(true);
-    });
-
-    it("debería presionar Tab para navegar entre campos", async () => {
-      await page.goto("https://example.com");
-      
-      // Presionar Tab varias veces
-      for (let i = 0; i < 3; i++) {
-        await page.keyboard.press("Tab");
-        await page.waitForTimeout(100 + Math.random() * 150);
-      }
-    });
-
-    it("debería presionar Escape para cancelar", async () => {
-      await page.goto("https://example.com");
-      
-      await page.keyboard.press("Escape");
-      await page.waitForTimeout(200);
-    });
-
-    it("debería usar combinación de teclas (Ctrl+A, Ctrl+C)", async () => {
-      await page.goto("https://example.com");
-      
-      // Seleccionar todo
-      await page.keyboard.press("Control+A");
-      await page.waitForTimeout(200);
-      
-      // Copiar
-      await page.keyboard.press("Control+C");
-      await page.waitForTimeout(200);
+    it("debería validar parámetros requeridos para acciones de coordenadas", async () => {
+      await expect(executeBrowserTool({ action: "mouseMove" })).rejects.toThrow("action mouseMove requiere x e y numéricos");
+      await expect(executeBrowserTool({ action: "mouseClick" })).rejects.toThrow("action mouseClick requiere x e y numéricos");
+      await expect(executeBrowserTool({ action: "type" })).rejects.toThrow("action type requiere value");
+      await expect(executeBrowserTool({ action: "findCoordinates" })).rejects.toThrow("action findCoordinates requiere targetColor");
     });
   });
 
-  describe("Flujo completo simulando comportamiento humano", () => {
-    it("debería navegar, leer, hacer scroll y hacer click", async () => {
-      await page.goto("https://example.com");
-      
-      // Leer el título (tiempo de lectura)
-      await page.waitForTimeout(1500);
-      
-      // Scroll para ver más contenido
-      await humanScroll("down", 300);
-      
-      // Leer un poco más
-      await page.waitForTimeout(1000);
-      
-      // Intentar hacer click en un link
-      const link = page.locator("a").first();
-      const count = await link.count();
-      if (count > 0) {
-        await humanClick("a");
-      }
-    });
-
-    it("debería simular búsqueda en Google", async () => {
-      await page.goto("https://www.google.com");
-      
-      // Esperar que cargue
-      await page.waitForLoadState("domcontentloaded");
-      
-      // Escribir en el campo de búsqueda letra por letra
-      const searchInput = page.locator("textarea[name='q'], input[name='q']").first();
-      await searchInput.click();
-      
-      const searchTerm = "playwright";
-      for (const char of searchTerm) {
-        await page.keyboard.type(char);
-        await page.waitForTimeout(50 + Math.random() * 100);
-      }
-      
-      // Presionar Enter
-      await page.keyboard.press("Enter");
-      
-      // Esperar resultados (Google puede redirigir o mostrar sugerencias)
-      await page.waitForTimeout(2000);
-      
-      // Verificar que no hay error
-      expect(true).toBe(true);
-    });
-
-    it("debería simular llenado de formulario con errores", async () => {
-      // Este test usa un formulario de prueba
-      await page.goto("https://www.w3schools.com/html/html_forms.asp");
-      
-      // Encontrar el campo de nombre
-      const nameInput = page.locator("input[name='fname']").first();
-      await nameInput.click();
-      
-      // Escribir nombre con posible error
-      const name = "Juan";
-      for (const char of name) {
-        await page.keyboard.type(char);
-        await page.waitForTimeout(80 + Math.random() * 120);
-      }
-      
-      // Tab al siguiente campo
-      await page.keyboard.press("Tab");
-      await page.waitForTimeout(200);
-      
-      // Escribir apellido
-      const lastName = "Pérez";
-      for (const char of lastName) {
-        await page.keyboard.type(char);
-        await page.waitForTimeout(80 + Math.random() * 120);
-      }
-      
-      // Cometer error y corregir
-      await page.keyboard.type("X");
-      await page.waitForTimeout(300);
-      await page.keyboard.press("Backspace");
-      await page.waitForTimeout(200);
-    });
-  });
-
-  describe("Comportamiento humano avanzado", () => {
-    it("debería pausar y pensar antes de actuar", async () => {
-      await page.goto("https://example.com");
-      
-      // Simular tiempo de "pensamiento"
-      await page.waitForTimeout(2000 + Math.random() * 3000);
-      
-      // Luego actuar
-      const title = await page.title();
-      expect(title).toBe("Example Domain");
-    });
-
-    it("debería hacer click en diferentes áreas del elemento", async () => {
-      await page.goto("https://example.com");
-      
-      // Click en el body
-      await page.locator("body").click();
-      await page.waitForTimeout(300);
-    }, 60000); // 60 segundos timeout
-
-    it("debería navegar usando solo teclado", async () => {
-      await page.goto("https://example.com");
-      
-      // Usar Tab para navegar
-      for (let i = 0; i < 5; i++) {
-        await page.keyboard.press("Tab");
-        await page.waitForTimeout(150 + Math.random() * 200);
-      }
-      
-      // Enter en el elemento enfocado
-      await page.keyboard.press("Enter");
-      await page.waitForTimeout(500);
+  describe("Cierre del navegador", () => {
+    it("debería cerrar la sesión del navegador mediante executeBrowserTool", async () => {
+      const result = await executeBrowserTool({ action: "close" });
+      expect(result.success).toBe(true);
+      expect(BrowserController.isLaunched).toBe(false);
     });
   });
 });

@@ -11,5 +11,5 @@ Eres un agente autónomo con capacidades de **lectura, escritura, edición y eje
   - `deleteFile` — eliminar archivo
   - `renamePath` — renombrar archivo/carpeta
   - `moveFolder` — mover archivo/carpeta
-  - `browser` — navegación web visible (Playwright): navigate, click, fill, extract, close
+  - `browser` — navegación web visible por coordenadas y visión: navigate, screenshot, findCoordinates, mouseMove, mouseClick, type, close
   - `logSession` — logging de sesiones en `/Users/lastprophet/.boris/logs/`

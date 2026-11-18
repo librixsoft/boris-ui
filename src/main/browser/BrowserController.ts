@@ -3,14 +3,13 @@ import { chromium, Browser, Page } from "playwright";
 export interface BrowserResult {
   success: boolean;
   url?: string;
-  selector?: string;
   value?: string;
   text?: string;
   screenshot?: string;
   title?: string;
   key?: string;
-  query?: string;
-  found?: boolean;
+  x?: number;
+  y?: number;
   error?: string;
 }
 
@@ -55,95 +54,159 @@ class BrowserController {
     return { success: true, url: this.page!.url() };
   }
 
-  async click(selector: string): Promise<BrowserResult> {
+  async screenshot(): Promise<BrowserResult> {
     await this.ensurePage();
-    await this.page!.locator(selector).first().click();
-    return { success: true, selector };
+    await this.ensureVisible();
+    await this.page!.waitForTimeout(100);
+    const buffer = await this.page!.screenshot();
+    return { success: true, screenshot: buffer.toString("base64") };
   }
 
-  async clickHuman(selector: string): Promise<BrowserResult> {
+  async mouseMove(x: number, y: number, options?: { steps?: number; human?: boolean }): Promise<BrowserResult> {
     await this.ensurePage();
-    const element = this.page!.locator(selector).first();
-    
-    // Mover el mouse al elemento (simular movimiento humano)
-    const box = await element.boundingBox();
-    if (box) {
-      const x = box.x + box.width / 2 + (Math.random() - 0.5) * 10;
-      const y = box.y + box.height / 2 + (Math.random() - 0.5) * 10;
-      await this.page!.mouse.move(x, y);
-      await this.page!.waitForTimeout(100 + Math.random() * 200);
+    const { steps = 10, human = false } = options || {};
+
+    if (human) {
+      const intermediateSteps = Math.max(steps, 12);
+      for (let i = 1; i <= intermediateSteps; i++) {
+        const t = i / intermediateSteps;
+        const jitterX = (Math.random() - 0.5) * 3;
+        const jitterY = (Math.random() - 0.5) * 3;
+        await this.page!.mouse.move(x * t + jitterX, y * t + jitterY);
+        await this.page!.waitForTimeout(10 + Math.random() * 15);
+      }
     }
-    
-    // Click con ligera variación
-    await element.click();
-    await this.page!.waitForTimeout(200 + Math.random() * 300);
-    
-    return { success: true, selector };
+    await this.page!.mouse.move(x, y);
+    return { success: true, x, y };
   }
 
-  async fill(selector: string, value: string): Promise<BrowserResult> {
+  async mouseClick(x: number, y: number, options?: { human?: boolean; button?: "left" | "right" | "middle" }): Promise<BrowserResult> {
     await this.ensurePage();
-    await this.page!.locator(selector).first().fill(value);
-    return { success: true, selector, value };
+    const { human = false, button = "left" } = options || {};
+
+    if (human) {
+      await this.mouseMove(x, y, { human: true });
+      await this.page!.waitForTimeout(80 + Math.random() * 120);
+    } else {
+      await this.page!.mouse.move(x, y);
+    }
+
+    await this.page!.mouse.click(x, y, { button });
+    if (human) {
+      await this.page!.waitForTimeout(100 + Math.random() * 150);
+    }
+    return { success: true, x, y };
   }
 
-  async fillHuman(selector: string, value: string, options?: {
+  async mouseDoubleClick(x: number, y: number): Promise<BrowserResult> {
+    await this.ensurePage();
+    await this.page!.mouse.move(x, y);
+    await this.page!.mouse.dblclick(x, y);
+    return { success: true, x, y };
+  }
+
+  async type(value: string, options?: {
+    human?: boolean;
     mistakes?: boolean;
     mistakesCount?: number;
     typingSpeed?: { min: number; max: number };
   }): Promise<BrowserResult> {
     await this.ensurePage();
-    const element = this.page!.locator(selector).first();
-    await element.click();
-    
     const {
-      mistakes = true,
+      human = true,
+      mistakes = false,
       mistakesCount = 1,
-      typingSpeed = { min: 50, max: 150 }
+      typingSpeed = { min: 25, max: 60 }
     } = options || {};
 
-    let currentText = "";
+    if (!human) {
+      await this.page!.keyboard.type(value);
+      return { success: true, value };
+    }
+
     const chars = value.split("");
-    
     for (let i = 0; i < chars.length; i++) {
       const char = chars[i];
-      
-      // Simular error humano aleatorio
+
       if (mistakes && Math.random() < 0.1 && i > 0 && mistakesCount > 0) {
-        // Escribir letra incorrecta
         const wrongChar = String.fromCharCode(97 + Math.floor(Math.random() * 26));
         await this.page!.keyboard.type(wrongChar);
         await this.page!.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
-        
-        // Borrar el error
         await this.page!.keyboard.press("Backspace");
         await this.page!.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
       }
-      
-      // Escribir la letra correcta
+
       await this.page!.keyboard.type(char);
-      currentText += char;
-      
-      // Variación de velocidad de escritura
       const delay = typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min);
       await this.page!.waitForTimeout(delay);
     }
-    
-    return { success: true, selector, value };
+
+    return { success: true, value };
   }
 
-  async extract(selector: string): Promise<BrowserResult> {
+  async findCoordinatesFromScreenshot(
+    base64Screenshot: string,
+    targetColorHex: string,
+    tolerance: number = 20
+  ): Promise<{ x: number; y: number } | null> {
     await this.ensurePage();
-    const el = this.page!.locator(selector).first();
-    await el.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
-    const text = await el.textContent();
-    return { success: true, selector, text: text || "" };
-  }
+    return await this.page!.evaluate(
+      ({ base64, targetHex, tol }) => {
+        return new Promise<{ x: number; y: number } | null>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return resolve(null);
+            ctx.drawImage(img, 0, 0);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
 
-  async screenshot(): Promise<BrowserResult> {
-    await this.ensurePage();
-    const buffer = await this.page!.screenshot();
-    return { success: true, screenshot: buffer.toString("base64") };
+            const hex = targetHex.replace("#", "");
+            const targetR = parseInt(hex.substring(0, 2), 16);
+            const targetG = parseInt(hex.substring(2, 4), 16);
+            const targetB = parseInt(hex.substring(4, 6), 16);
+
+            let sumX = 0;
+            let sumY = 0;
+            let count = 0;
+
+            for (let y = 0; y < canvas.height; y++) {
+              for (let x = 0; x < canvas.width; x++) {
+                const idx = (y * canvas.width + x) * 4;
+                const r = data[idx];
+                const g = data[idx + 1];
+                const b = data[idx + 2];
+
+                if (
+                  Math.abs(r - targetR) <= tol &&
+                  Math.abs(g - targetG) <= tol &&
+                  Math.abs(b - targetB) <= tol
+                ) {
+                  sumX += x;
+                  sumY += y;
+                  count++;
+                }
+              }
+            }
+
+            if (count > 0) {
+              resolve({
+                x: Math.round(sumX / count),
+                y: Math.round(sumY / count)
+              });
+            } else {
+              resolve(null);
+            }
+          };
+          img.onerror = () => resolve(null);
+          img.src = `data:image/png;base64,${base64}`;
+        });
+      },
+      { base64: base64Screenshot, targetHex: targetColorHex, tol: tolerance }
+    );
   }
 
   async pressKey(key: string): Promise<BrowserResult> {
@@ -154,22 +217,10 @@ class BrowserController {
 
   async pressKeyHuman(key: string): Promise<BrowserResult> {
     await this.ensurePage();
-    // Simular tiempo de reacción humano antes de presionar
     await this.page!.waitForTimeout(200 + Math.random() * 300);
     await this.page!.keyboard.press(key);
     await this.page!.waitForTimeout(100 + Math.random() * 200);
     return { success: true, key };
-  }
-
-  async search(query: string): Promise<BrowserResult> {
-    await this.ensurePage();
-    const locator = this.page!.locator(`:text("${query}")`).first();
-    const count = await locator.count();
-    if (count > 0) {
-      await locator.scrollIntoViewIfNeeded();
-      return { success: true, query, found: true };
-    }
-    return { success: true, query, found: false };
   }
 
   async getTitle(): Promise<BrowserResult> {
@@ -230,4 +281,5 @@ class BrowserController {
   }
 }
 
+export { BrowserController };
 export default new BrowserController();
