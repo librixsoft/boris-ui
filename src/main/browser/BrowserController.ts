@@ -61,9 +61,74 @@ class BrowserController {
     return { success: true, selector };
   }
 
+  async clickHuman(selector: string): Promise<BrowserResult> {
+    await this.ensurePage();
+    const element = this.page!.locator(selector).first();
+    
+    // Mover el mouse al elemento (simular movimiento humano)
+    const box = await element.boundingBox();
+    if (box) {
+      const x = box.x + box.width / 2 + (Math.random() - 0.5) * 10;
+      const y = box.y + box.height / 2 + (Math.random() - 0.5) * 10;
+      await this.page!.mouse.move(x, y);
+      await this.page!.waitForTimeout(100 + Math.random() * 200);
+    }
+    
+    // Click con ligera variación
+    await element.click();
+    await this.page!.waitForTimeout(200 + Math.random() * 300);
+    
+    return { success: true, selector };
+  }
+
   async fill(selector: string, value: string): Promise<BrowserResult> {
     await this.ensurePage();
     await this.page!.locator(selector).first().fill(value);
+    return { success: true, selector, value };
+  }
+
+  async fillHuman(selector: string, value: string, options?: {
+    mistakes?: boolean;
+    mistakesCount?: number;
+    typingSpeed?: { min: number; max: number };
+  }): Promise<BrowserResult> {
+    await this.ensurePage();
+    const element = this.page!.locator(selector).first();
+    await element.click();
+    
+    const {
+      mistakes = true,
+      mistakesCount = 1,
+      typingSpeed = { min: 50, max: 150 }
+    } = options || {};
+
+    let currentText = "";
+    const chars = value.split("");
+    
+    for (let i = 0; i < chars.length; i++) {
+      const char = chars[i];
+      
+      // Simular error humano aleatorio
+      if (mistakes && Math.random() < 0.1 && i > 0 && mistakesCount > 0) {
+        // Escribir letra incorrecta
+        const wrongChar = String.fromCharCode(97 + Math.floor(Math.random() * 26));
+        await this.page!.keyboard.type(wrongChar);
+        await this.page!.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
+        
+        // Borrar el error
+        await this.page!.keyboard.press("Backspace");
+        await this.page!.waitForTimeout(typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min));
+      }
+      
+      // Escribir la letra correcta
+      await this.page!.keyboard.type(char);
+      currentText += char;
+      
+      // Variación de velocidad de escritura
+      const delay = typingSpeed.min + Math.random() * (typingSpeed.max - typingSpeed.min);
+      await this.page!.waitForTimeout(delay);
+    }
+    
     return { success: true, selector, value };
   }
 
@@ -84,6 +149,15 @@ class BrowserController {
   async pressKey(key: string): Promise<BrowserResult> {
     await this.ensurePage();
     await this.page!.keyboard.press(key);
+    return { success: true, key };
+  }
+
+  async pressKeyHuman(key: string): Promise<BrowserResult> {
+    await this.ensurePage();
+    // Simular tiempo de reacción humano antes de presionar
+    await this.page!.waitForTimeout(200 + Math.random() * 300);
+    await this.page!.keyboard.press(key);
+    await this.page!.waitForTimeout(100 + Math.random() * 200);
     return { success: true, key };
   }
 

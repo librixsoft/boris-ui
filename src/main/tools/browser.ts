@@ -1,7 +1,7 @@
 import BrowserController from "../browser/BrowserController";
 import { Tool } from "./registry";
 
-type BrowserAction = "navigate" | "click" | "fill" | "extract" | "close" | "pressKey" | "search" | "screenshot" | "title" | "url";
+type BrowserAction = "navigate" | "click" | "clickHuman" | "fill" | "fillHuman" | "extract" | "close" | "pressKey" | "pressKeyHuman" | "search" | "screenshot" | "title" | "url";
 
 interface BrowserParams {
   action: BrowserAction;
@@ -15,13 +15,13 @@ interface BrowserParams {
 const tool: Tool = {
   name: "browser",
   description:
-    "Navegación web visible. Abre un navegador en ventana visible y permite ir a una URL, hacer clic, rellenar campos, extraer texto, presionar teclas, buscar en la página, capturar pantalla y obtener título/URL. La ventana se mantiene abierta hasta que se cierra.",
+    "Navegación web visible. Abre un navegador en ventana visible y permite ir a una URL, hacer clic (normal o humano), rellenar campos (normal o humano), extraer texto, presionar teclas (normal o humano), buscar en la página, capturar pantalla y obtener título/URL. La ventana se mantiene abierta hasta que se cierra. Las acciones 'Human' simulan comportamiento humano: clickHuman mueve el mouse antes de click, fillHuman escribe letra por letra con errores aleatorios, pressKeyHuman tiene retraso humano.",
   schema: {
     type: "object",
     properties: {
       action: {
         type: "string",
-        enum: ["navigate", "click", "fill", "extract", "close", "pressKey", "search", "screenshot", "title", "url"],
+        enum: ["navigate", "click", "clickHuman", "fill", "fillHuman", "extract", "close", "pressKey", "pressKeyHuman", "search", "screenshot", "title", "url"],
         description: "Acción de navegación a ejecutar"
       },
       url: {
@@ -64,11 +64,23 @@ const tool: Tool = {
         }
         return await BrowserController.click(params.selector as string);
       }
+      case "clickHuman": {
+        if (!params.selector) {
+          throw new Error("action clickHuman requiere selector");
+        }
+        return await BrowserController.clickHuman(params.selector as string);
+      }
       case "fill": {
         if (!params.selector || !params.value) {
           throw new Error("action fill requiere selector y value");
         }
         return await BrowserController.fill(params.selector as string, params.value as string);
+      }
+      case "fillHuman": {
+        if (!params.selector || !params.value) {
+          throw new Error("action fillHuman requiere selector y value");
+        }
+        return await BrowserController.fillHuman(params.selector as string, params.value as string);
       }
       case "extract": {
         if (!params.selector) {
@@ -84,6 +96,12 @@ const tool: Tool = {
           throw new Error("action pressKey requiere key");
         }
         return await BrowserController.pressKey(params.key as string);
+      }
+      case "pressKeyHuman": {
+        if (!params.key) {
+          throw new Error("action pressKeyHuman requiere key");
+        }
+        return await BrowserController.pressKeyHuman(params.key as string);
       }
       case "search": {
         if (!params.query) {
