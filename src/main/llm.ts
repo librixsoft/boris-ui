@@ -653,4 +653,4 @@ export function registerLlmIpc(): void {
   ipcMain.handle("boris:chat:abort", abortChatCompletion);
 }
 
-export { LLM_CONFIG };
+export { LLM_CONFIG, parseSseLine, extractCleanText, extractReasoningFromTags, buildToolsParam };

@@ -1,22 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("../src/main/tools/registry", () => ({
+  listTools: vi.fn(() => []),
+  executeTool: vi.fn()
+}));
+
+import { extractCleanText } from "../src/main/llm";
 
 /**
  * TESTS PARA FILTRADO DE TAGS EN EL STREAM
  *
- * Cubre extractCleanText, que se usa para filtrar tags de tool calls parciales
- * o completos del texto que se muestra en el chat durante el streaming.
+ * Cubre extractCleanText, importada de la implementación real de src/main/llm.ts.
  *
  * El tool calling es nativo (vía API OpenAI); no existe parser de tool calls
  * en formato texto, por lo que no hay tests de extracción manual.
  */
-
-function extractCleanText(rawBuffer: string): string {
-  return rawBuffer
-    .replace(/<tool\s+name="[^"]*">[\s\S]*?<\/tool>/g, "")
-    .replace(/<tool\s+name="[^"]*">[\s\S]*?(?=<tool\s+name=|$)/g, "")
-    .replace(/<\/tool>/g, "")
-    .trim();
-}
 
 describe("Tool Parser - extractCleanText", () => {
   it("debería eliminar tool calls con cierre y dejar texto limpio", () => {

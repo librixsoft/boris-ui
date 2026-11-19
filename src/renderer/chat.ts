@@ -740,3 +740,5 @@ messagesEl.addEventListener("click", (e: MouseEvent) => {
   e.preventDefault();
   window.boris.shell.openExternal(href);
 });
+
+export { httpStatusLabel, splitErrorHint, parseErrorPayload, formatArgs, formatResult, renderBrowserDetailHtml };

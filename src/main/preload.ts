@@ -126,3 +126,5 @@ contextBridge.exposeInMainWorld("boris", {
     }
   }
 });
+
+export { attachListeners };
