@@ -1,4 +1,6 @@
 import { createTaskSessionControl } from "./taskSessionControl.js";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 
 interface MessagesElement extends HTMLElement {
   scrollTop: number;
@@ -43,6 +45,9 @@ declare global {
       tools: {
         execute(name: string, params: Record<string, unknown>): Promise<unknown>;
         list(): Promise<unknown>;
+      };
+      shell: {
+        openExternal(url: string): void;
       };
     };
   }
@@ -326,7 +331,7 @@ function createReasoningBlock(): HTMLDivElement {
   block.appendChild(label);
 
   const content = document.createElement("div");
-  content.className = "reasoning-content";
+  content.className = "reasoning-content markdown";
   block.appendChild(content);
 
   const toggle = document.createElement("button");
@@ -420,6 +425,11 @@ function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
+function renderMarkdown(text: string): string {
+  const html = marked.parse(text, { breaks: true, async: false });
+  return DOMPurify.sanitize(html);
+}
+
 interface StreamBotState {
   bubble: HTMLDivElement;
   textEl: HTMLDivElement;
@@ -437,6 +447,7 @@ interface PendingToolRow {
 function streamResponse(): void {
   const indicator = appendTyping();
   let content = "";
+  let reasoning = "";
   let hasReasoning = false;
   let streamBot: StreamBotState | null = null;
   let streamAcc: HTMLDetailsElement | null = null;
@@ -449,7 +460,7 @@ function streamResponse(): void {
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     const textEl = document.createElement("div");
-    textEl.className = "bubble-text";
+    textEl.className = "bubble-text markdown";
     bubble.appendChild(textEl);
     wrapper.appendChild(bubble);
     mountMessage(wrapper);
@@ -591,11 +602,12 @@ function streamResponse(): void {
         content += chunk;
         removeTyping(indicator);
         const { textEl } = ensureBotMessage();
-        textEl.textContent = content;
+        textEl.innerHTML = renderMarkdown(content);
         scrollToBottom();
       },
       onReasoning(chunk: string) {
         hasReasoning = true;
+        reasoning += chunk;
         const { bubble } = ensureBotMessage();
         let block = bubble.querySelector(".reasoning-block") as HTMLDivElement;
         if (!block) {
@@ -603,7 +615,7 @@ function streamResponse(): void {
         }
         const reasoningContent = block.querySelector(".reasoning-content") as HTMLElement;
         if (reasoningContent) {
-          reasoningContent.textContent += chunk;
+          reasoningContent.innerHTML = renderMarkdown(reasoning);
           scrollToBubble(block);
         }
       },
@@ -718,3 +730,13 @@ inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
 });
 
 inputEl.addEventListener("input", autoResize);
+
+messagesEl.addEventListener("click", (e: MouseEvent) => {
+  const target = e.target as Element;
+  const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
+  if (!anchor) return;
+  const href = anchor.getAttribute("href");
+  if (!href) return;
+  e.preventDefault();
+  window.boris.shell.openExternal(href);
+});

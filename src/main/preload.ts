@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, IpcRendererEvent, shell } from "electron";
 
 interface ChatHandlers {
   onChunk: (content: string) => void;
@@ -78,10 +78,15 @@ interface ToolsApi {
   list(): Promise<unknown>;
 }
 
+interface ShellApi {
+  openExternal(url: string): void;
+}
+
 interface BorisApi {
   platform: string;
   chat: ChatApi;
   tools: ToolsApi;
+  shell: ShellApi;
 }
 
 declare global {
@@ -113,6 +118,11 @@ contextBridge.exposeInMainWorld("boris", {
     },
     list(): Promise<unknown> {
       return ipcRenderer.invoke("boris:tools:list");
+    }
+  },
+  shell: {
+    openExternal(url: string): void {
+      shell.openExternal(url);
     }
   }
 });
