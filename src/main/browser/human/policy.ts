@@ -105,7 +105,7 @@ export function beforeAction(actionClass: ActionClass): void {
   const now = Date.now();
   const { start, end } = config.activeHours;
   const date = new Date(now);
-  const currentHour = date.getHours();
+  const currentHour = date.getUTCHours();
   if (currentHour < start || currentHour >= end) {
     const nextStart = new Date(now);
     nextStart.setHours(start, 0, 0, 0);

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 
 export interface HumanTelemetryEvent {
   ts: number;
@@ -14,7 +15,8 @@ export interface HumanTelemetryEvent {
 }
 
 function getTelemetryPath(): string {
-  return process.env.BORIS_HUMAN_TELEMETRY ?? path.join(process.cwd(), "human-telemetry.jsonl");
+  return process.env.BORIS_HUMAN_TELEMETRY
+    ?? path.join(os.homedir(), ".boris", "telemetry", "human-telemetry.jsonl");
 }
 
 function rotateIfNeeded(filePath: string): void {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { chromium, Browser, Page } from "playwright";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 
 describe("F0 baseline detection", () => {
   let browser: Browser;
@@ -70,9 +71,9 @@ describe("F0 baseline detection", () => {
       },
     };
 
-    const plansDir = path.join(__dirname, "..", "..", "plans");
-    const baselinePath = path.join(plansDir, "baseline.json");
-    fs.mkdirSync(plansDir, { recursive: true });
+    const humanDir = path.join(os.homedir(), ".boris", "human");
+    const baselinePath = path.join(humanDir, "baseline.json");
+    fs.mkdirSync(humanDir, { recursive: true });
     fs.writeFileSync(baselinePath, JSON.stringify(baseline, null, 2));
 
     expect(baseline.score).toBeDefined();

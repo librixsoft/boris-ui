@@ -80,8 +80,8 @@ describe("F3 policy caps", () => {
     });
 
     const now = new Date();
-    const outsideHour = now.getHours() < 22 ? 3 : 23;
-    now.setHours(outsideHour, 0, 0, 0);
+    const outsideHour = now.getUTCHours() < 22 ? 3 : 23;
+    now.setUTCHours(outsideHour, 0, 0, 0);
     vi.setSystemTime(now.getTime());
     expect(() => beforeAction("read")).toThrow();
   });

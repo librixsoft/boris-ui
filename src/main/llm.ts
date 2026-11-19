@@ -1,6 +1,8 @@
 import { ipcMain, IpcMainInvokeEvent } from "electron";
 import { listTools, executeTool, Tool } from "./tools/registry";
 import { execute as executeLogSession } from "./tools/logSession";
+import { buildSystemPrompt } from "./systemPrompt";
+import { evaluateStuck, StuckState } from "./stuckDetection";
 
 export interface LLMConfig {
   baseUrl: string;
@@ -88,36 +90,6 @@ const LLM_CONFIG: LLMConfig = {
 const MAX_TOOL_ROUNDS = Number(process.env.BORIS_MAX_TOOL_ROUNDS || 200);
 
 const abortControllers = new Map<string, AbortController>();
-
-function buildSystemPrompt(tools: Tool[]): string {
-  const toolInstructions = tools
-    .map(
-      (t) =>
-        `Herramienta: ${t.name}
-Descripción: ${t.description}
-Schema JSON: ${JSON.stringify(t.schema, null, 2)}
-`
-    )
-    .join("\n");
-
-  return `Sos Boris, un asistente conversacional en español. Respondé de forma clara y concisa.
-
-Cuando necesites realizar una operación, usá tool calling nativo: las herramientas se declaran vía la API y el sistema ejecuta las llamadas que emitas. Esperá el resultado antes de continuar. Podés encadenar múltiples tool calls.
-
-Después de ejecutar herramientas, confirmá al usuario lo que se hizo y terminá. No generes razonamiento adicional tras recibir el resultado de una herramienta.
-
-Herramientas disponibles:
-${toolInstructions}
-
-Estrategia de navegador (visión):
-- Tras navigate, mouseWheel, mouseClick, type o pressKey: usa screenshot para VER la página. El resultado incluye viewport y scroll: sabés dónde está dentro de la imagen y si llegaste al final.
-- Visión para navegar y confirmar; DOM para datos exactos: para extraer emails, nombres, URLs o texto usa pageText y getLinks (la imagen puede tener errores de lectura).
-- Para llegar al final: usa scrollToBottom; para un texto concreto: usa scrollToText.
-- No uses mouseClick sin haber confirmado el punto con findCoordinates, elementAtPoint o getLinks.
-- Si findCoordinates falla 2 veces seguidas con el mismo texto: no adivines coordenadas. Usa pageText para leer el texto real, ajusta la búsqueda o usa getLinks.
-- Si tras un clic la captura siguiente no muestra el cambio esperado: no repitir el clic a ciegas; verificá con elementAtPoint o findCoordinates antes.
-`;
-}
 
 function buildToolsParam(tools: Tool[]): Array<{
   type: "function";
@@ -255,8 +227,33 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
   const tools = listTools();
   const systemPrompt = buildSystemPrompt(tools);
   let currentMessages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...messages];
+  let postToolCallIterations = 0;
+  let usedBrowser = false;
+  let browserActions = 0;
+  let emittedTaskEnd = false;
 
   try {
+    async function emitTaskEndMarker(reason: "done" | "maxRounds" | "error" | "aborted"): Promise<void> {
+      if (usedBrowser && !emittedTaskEnd) {
+        await executeLogSession({
+          action: "append",
+          sessionId,
+          entry: {
+            type: "task-end",
+            name: "task-end",
+            input: {
+              reason,
+              roundsUsed: postToolCallIterations,
+              browserActions,
+              success: reason === "done"
+            },
+            status: reason === "done" ? "success" : "error"
+          }
+        });
+        emittedTaskEnd = true;
+      }
+    }
+
     while (true) {
       const response = await fetch(`${LLM_CONFIG.baseUrl}/v1/chat/completions`, {
         method: "POST",
@@ -291,7 +288,6 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       let rawOffset = 0;
       const nativeCallsMap = new Map<number, { id: string; name: string; args: string }>();
       let pendingCalls: ToolCall[] = [];
-      let postToolCallIterations = 0;
       let hasReasoning = false;
       let lastLoggedContent = "";
 
@@ -389,6 +385,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
       if (pendingCalls.length > 0) {
         postToolCallIterations++;
         if (postToolCallIterations > MAX_TOOL_ROUNDS) {
+          await emitTaskEndMarker("maxRounds");
           throw new Error(`Límite de rounds de herramientas alcanzado (${MAX_TOOL_ROUNDS})`);
         }
 
@@ -405,8 +402,25 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
           }))
         });
 
+        let stuckState: StuckState = { history: [], nudgeCount: 0 };
+
         for (const call of pendingCalls) {
           if (controller.signal.aborted) break;
+          if (call.name === "browser") {
+            const { verdict, next, message } = evaluateStuck(stuckState, call.args);
+            stuckState = next;
+            if (verdict === "stop") {
+              throw new Error(
+                `Bucle repetido: la última acción de browser se repitió 3 veces sin avance. Límite de detección de bucle alcanzado.`
+              );
+            } else if (verdict === "nudge") {
+              currentMessages.push({ role: "user", content: message! });
+            }
+          }
+          if (call.name === "browser") {
+            usedBrowser = true;
+            browserActions++;
+          }
           sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args });
 
           const toolStart = Date.now();
@@ -523,6 +537,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         }
 
         if (controller.signal.aborted) {
+          await emitTaskEndMarker("aborted");
           sendToRenderer(event, "boris:chat:done", requestId, {});
           return;
         }
@@ -560,11 +575,30 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         }
       }
 
+      await emitTaskEndMarker("done");
       sendToRenderer(event, "boris:chat:done", requestId, {});
       break;
     }
   } catch (error) {
     if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      if (usedBrowser && !emittedTaskEnd) {
+        await executeLogSession({
+          action: "append",
+          sessionId,
+          entry: {
+            type: "task-end",
+            name: "task-end",
+            input: {
+              reason: "aborted",
+              roundsUsed: postToolCallIterations,
+              browserActions,
+              success: false
+            },
+            status: "error"
+          }
+        });
+        emittedTaskEnd = true;
+      }
       sendToRenderer(event, "boris:chat:done", requestId, {});
     } else {
       const errorMessage = error instanceof Error ? error.message : "Error desconocido";
@@ -578,6 +612,24 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         }
       });
 
+      if (usedBrowser && !emittedTaskEnd) {
+        await executeLogSession({
+          action: "append",
+          sessionId,
+          entry: {
+            type: "task-end",
+            name: "task-end",
+            input: {
+              reason: "error",
+              roundsUsed: postToolCallIterations,
+              browserActions,
+              success: false
+            },
+            status: "error"
+          }
+        });
+        emittedTaskEnd = true;
+      }
       sendToRenderer(event, "boris:chat:error", requestId, {
         message: errorMessage
       });

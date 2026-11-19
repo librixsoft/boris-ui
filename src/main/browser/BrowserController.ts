@@ -16,6 +16,7 @@ export interface BrowserResult {
   viewport?: { width: number; height: number };
   scroll?: { y: number; height: number; atBottom: boolean };
   links?: Array<{ href: string; text: string; x: number; y: number; visible: boolean }>;
+  elements?: Array<{ text: string; x: number; y: number; visible: boolean; tag: string }>;
   element?: { tag: string; text: string; href: string | null; role: string | null; visible: boolean };
 }
 
@@ -411,7 +412,7 @@ class BrowserController {
     const maxAttempts = 12;
     for (let i = 0; i < maxAttempts; i++) {
       const found = await this.findVisualCoordinates({ text });
-      if (found && typeof found === "object" && "x" in found && "y" in found && "found" in found && found.found) {
+      if (found && typeof found === "object" && "x" in found && "y" in found && typeof found.x === "number" && typeof found.y === "number") {
         const viewport = await this.page!.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
         const scroll = await this.page!.evaluate(() => ({ y: window.scrollY, height: document.documentElement.scrollHeight, atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2 }));
         return { success: true, x: (found as { x: number; y: number }).x + offset, y: (found as { x: number; y: number }).y, viewport, scroll };
@@ -481,7 +482,7 @@ class BrowserController {
       }
       return results;
     }, { term: text, maxLimit: limit });
-    return { success: true, value: JSON.stringify(bodyText) };
+    return { success: true, elements: bodyText };
   }
 
   private async isInViewport(coords: { x: number; y: number }): Promise<boolean> {

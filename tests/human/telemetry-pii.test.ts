@@ -1,10 +1,16 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, afterAll } from "vitest";
 import { recordHumanEvent, readTelemetryEvents, clearTelemetry } from "../../src/main/browser/human/telemetry";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 
 describe("F0 telemetry PII", () => {
-  const testPath = path.join(__dirname, "..", "..", "plans", "test-telemetry.jsonl");
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "boris-tele-"));
+  const testPath = path.join(testDir, "test-telemetry.jsonl");
+
+  afterAll(() => {
+    fs.rmdirSync(testDir, { recursive: true });
+  });
 
   afterEach(() => {
     try {
@@ -67,7 +73,7 @@ describe("F0 telemetry PII", () => {
   });
 
   it("should return empty array when file does not exist", () => {
-    const nonexistent = path.join(__dirname, "..", "..", "plans", "nonexistent-telemetry.jsonl");
+    const nonexistent = path.join(testDir, "nonexistent-telemetry.jsonl");
     const events = readTelemetryEvents(nonexistent);
     expect(events).toHaveLength(0);
   });

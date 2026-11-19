@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-11-19T13:51:32.297Z",
+  "score": 0,
+  "signals": {
+    "static": 0.5,
+    "mouse": 0,
+    "keyboard": 0.2,
+    "click": 0,
+    "wheel": 0
+  },
+  "raw": {
+    "webdriver": true,
+    "plugins": 0,
+    "innerWidth": 1280,
+    "outerWidth": 1280,
+    "mouseFirstX": 100,
+    "mouseFirstY": 100,
+    "mouseSpeedCv": 0.82,
+    "keyboardIntervalCv": 0.11846647734252759,
+    "wheelDeltaCv": 0
+  }
+}
