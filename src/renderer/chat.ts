@@ -60,10 +60,19 @@ let streamTimer: ReturnType<typeof setTimeout> | null = null;
 let messageQueue: string[] = [];
 let chatSessionId: string | null = null;
 let browserStopRequested = false;
+let activeTyping: HTMLDivElement | null = null;
 const taskControl = createTaskSessionControl();
 
 function scrollToBottom(): void {
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function mountMessage(wrapper: HTMLElement): void {
+  if (activeTyping && activeTyping.isConnected && activeTyping.parentElement === messagesEl) {
+    messagesEl.insertBefore(wrapper, activeTyping);
+  } else {
+    messagesEl.appendChild(wrapper);
+  }
 }
 
 function appendMessage(role: string, text: string): HTMLDivElement {
@@ -75,7 +84,7 @@ function appendMessage(role: string, text: string): HTMLDivElement {
   bubble.textContent = text;
 
   wrapper.appendChild(bubble);
-  messagesEl.appendChild(wrapper);
+  mountMessage(wrapper);
   scrollToBottom();
   return bubble;
 }
@@ -93,12 +102,136 @@ function appendTyping(): HTMLDivElement {
 
   wrapper.appendChild(indicator);
   messagesEl.appendChild(wrapper);
+  activeTyping = wrapper;
   scrollToBottom();
-  return indicator as unknown as HTMLDivElement;
+  return wrapper;
 }
 
 function removeTyping(indicator: HTMLDivElement): void {
   indicator.remove();
+  if (activeTyping === indicator) {
+    activeTyping = null;
+  }
+}
+
+interface ParsedError {
+  title: string;
+  message: string;
+  hint: string;
+  detail: string;
+}
+
+function httpStatusLabel(status: number): string {
+  switch (status) {
+    case 400: return "Solicitud inválida";
+    case 401: return "No autorizado";
+    case 403: return "Acceso denegado";
+    case 404: return "Recurso no encontrado";
+    case 408: return "Tiempo de espera agotado";
+    case 413: return "Solicitud demasiado grande";
+    case 422: return "Datos no procesables";
+    case 429: return "Demasiadas solicitudes";
+    case 500: return "Error interno del servidor";
+    case 502: return "Respuesta inválida del servidor";
+    case 503: return "Servicio no disponible";
+    case 504: return "Tiempo de espera del servidor";
+    default: return "Error del servidor";
+  }
+}
+
+function splitErrorHint(text: string): { message: string; hint: string } {
+  const match = /^(.*?)\s*[-\u2013\u2014]\s*hint:\s*(.*)$/i.exec(text);
+  if (!match) return { message: text.trim(), hint: "" };
+  return { message: match[1].trim(), hint: match[2].trim() };
+}
+
+function parseErrorPayload(raw: string): ParsedError {
+  const trimmed = String(raw ?? "").trim().replace(/^error:\s*/i, "");
+  const httpMatch = /^HTTP\s+(\d{3})\s*:\s*([\s\S]*)$/i.exec(trimmed);
+  const status = httpMatch ? Number(httpMatch[1]) : null;
+  const body = httpMatch ? httpMatch[2].trim() : trimmed;
+  let serverMessage = "";
+  let serverType = "";
+
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed === "object") {
+      const container = parsed as Record<string, unknown>;
+      const errorField = container.error;
+      const source = errorField && typeof errorField === "object"
+        ? (errorField as Record<string, unknown>)
+        : container;
+      if (typeof source.message === "string") serverMessage = source.message;
+      if (typeof source.type === "string") serverType = source.type;
+    }
+  } catch {
+    serverMessage = body;
+  }
+
+  if (!serverMessage) {
+    serverMessage = body || "Se produjo un error inesperado.";
+  }
+
+  const { message, hint } = splitErrorHint(serverMessage);
+  const title = status ? `HTTP ${status} \u00b7 ${httpStatusLabel(status)}` : "Error";
+  const detailHeader = serverType ? `${title} (${serverType})` : title;
+  const detail = body && body !== message ? `${detailHeader}\n\n${body}` : detailHeader;
+
+  return { title, message, hint, detail };
+}
+
+function appendError(rawMessage: string): HTMLDivElement {
+  const parsed = parseErrorPayload(rawMessage);
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "message bot";
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble bubble--error";
+  bubble.setAttribute("role", "alert");
+
+  const header = document.createElement("div");
+  header.className = "error-card-header";
+  const mark = document.createElement("span");
+  mark.className = "error-card-mark";
+  mark.textContent = "!";
+  mark.setAttribute("aria-hidden", "true");
+  const title = document.createElement("span");
+  title.className = "error-card-title";
+  title.textContent = parsed.title;
+  header.appendChild(mark);
+  header.appendChild(title);
+  bubble.appendChild(header);
+
+  const message = document.createElement("p");
+  message.className = "error-card-message";
+  message.textContent = parsed.message;
+  bubble.appendChild(message);
+
+  if (parsed.hint) {
+    const hint = document.createElement("p");
+    hint.className = "error-card-hint";
+    hint.textContent = parsed.hint;
+    bubble.appendChild(hint);
+  }
+
+  if (parsed.detail) {
+    const details = document.createElement("details");
+    details.className = "error-card-detail";
+    const summary = document.createElement("summary");
+    summary.textContent = "Detalle técnico";
+    const pre = document.createElement("pre");
+    pre.className = "error-card-detail-content";
+    pre.textContent = parsed.detail;
+    details.appendChild(summary);
+    details.appendChild(pre);
+    bubble.appendChild(details);
+  }
+
+  wrapper.appendChild(bubble);
+  mountMessage(wrapper);
+  scrollToBottom();
+  return bubble;
 }
 
 function autoResize(): void {
@@ -143,7 +276,7 @@ function appendQueuedMessage(text: string): void {
   bubble.textContent = `En cola (${messageQueue.length})...`;
 
   wrapper.appendChild(bubble);
-  messagesEl.appendChild(wrapper);
+  mountMessage(wrapper);
   scrollToBottom();
 }
 
@@ -210,7 +343,7 @@ function createReasoningBlock(): HTMLDivElement {
 
 function appendReasoningInsideBubble(bubble: HTMLDivElement): HTMLDivElement {
   const block = createReasoningBlock();
-  bubble.insertBefore(block, bubble.firstElementChild);
+  bubble.appendChild(block);
   return block;
 }
 
@@ -319,14 +452,14 @@ function streamResponse(): void {
     textEl.className = "bubble-text";
     bubble.appendChild(textEl);
     wrapper.appendChild(bubble);
-    messagesEl.appendChild(wrapper);
+    mountMessage(wrapper);
     streamBot = { bubble, textEl, wrapper };
     return streamBot;
   }
 
   function ensureToolsAccordion(): HTMLDetailsElement {
     if (streamAcc) return streamAcc;
-    const wrapper = streamBot!.wrapper;
+    const wrapper = ensureBotMessage().wrapper;
     const acc = document.createElement("details");
     acc.className = "tools-accordion";
     acc.setAttribute("aria-expanded", "false");
@@ -510,7 +643,7 @@ function streamResponse(): void {
         }
         endTaskSession();
         removeTyping(indicator);
-        appendMessage("bot", `Error: ${message}`);
+        appendError(message);
         activeStream = null;
         processQueue();
       }
@@ -520,7 +653,7 @@ function streamResponse(): void {
     console.error("[streamResponse] error:", error);
     const errorMessage = error instanceof Error ? error.message : "Error desconocido al iniciar stream";
     removeTyping(indicator);
-    appendMessage("bot", `Error: ${errorMessage}`);
+    appendError(errorMessage);
     activeStream = null;
     setTaskControlActive(false);
     processQueue();
