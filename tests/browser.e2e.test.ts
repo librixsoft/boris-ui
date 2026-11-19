@@ -2,6 +2,9 @@ import { describe, it, expect, afterAll, beforeEach } from "vitest";
 import BrowserController from "../src/main/browser/BrowserController";
 import { execute as executeBrowserTool } from "../src/main/tools/browser";
 
+const e2eHeaded = ["1", "true"].includes((process.env.BORIS_E2E_HEADED ?? "").trim().toLowerCase());
+process.env.BORIS_HUMAN_HEADLESS = e2eHeaded ? "0" : "1";
+
 // Réplica visual autocontenida de interfaz tipo LinkedIn (con barra superior "Buscar" y feed "Crear publicación")
 const LINKEDIN_SIMULATION_HTML = `
 <!DOCTYPE html>

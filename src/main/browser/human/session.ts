@@ -3,7 +3,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { readProfile, writeProfile, acquireProfileLock, HumanProfileFile } from "./profile";
 
+function resolveHeadlessFromEnv(): boolean {
+  const raw = (process.env.BORIS_HUMAN_HEADLESS ?? "").trim().toLowerCase();
+  if (raw === "") return false;
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
+  throw new Error(`Valor invalido para BORIS_HUMAN_HEADLESS: ${process.env.BORIS_HUMAN_HEADLESS}`);
+}
+
 export async function launchHumanContext(profileDir: string): Promise<BrowserContext> {
+  const headless = resolveHeadlessFromEnv();
   const releaseLock = acquireProfileLock(profileDir);
 
   const profile = readProfile(profileDir);
@@ -16,7 +25,7 @@ export async function launchHumanContext(profileDir: string): Promise<BrowserCon
   try {
     context = await chromium.launchPersistentContext(profileDir, {
       channel: "chrome",
-      headless: false,
+      headless,
       viewport: null,
       locale: process.env.BORIS_HUMAN_LOCALE,
       timezoneId: process.env.BORIS_HUMAN_TZ,
@@ -29,7 +38,7 @@ export async function launchHumanContext(profileDir: string): Promise<BrowserCon
     });
   } catch (launchError) {
     context = await chromium.launchPersistentContext(profileDir, {
-      headless: false,
+      headless,
       viewport: null,
       locale: process.env.BORIS_HUMAN_LOCALE,
       timezoneId: process.env.BORIS_HUMAN_TZ,
