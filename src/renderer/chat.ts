@@ -58,6 +58,7 @@ const inputEl = document.getElementById("input") as InputElement;
 const sendEl = document.getElementById("send") as SendElement;
 const browserControlOverlay = document.getElementById("browser-control-overlay") as HTMLDivElement;
 const browserStopEl = document.getElementById("browser-stop") as HTMLButtonElement;
+const tokenCounterEl = document.getElementById("token-counter") as HTMLDivElement;
 
 const chatHistory: ChatMessage[] = [];
 let activeStream: ChatStreamResult | null = null;
@@ -66,6 +67,8 @@ let messageQueue: string[] = [];
 let chatSessionId: string | null = null;
 let browserStopRequested = false;
 let activeTyping: HTMLDivElement | null = null;
+let totalTokens = 0;
+let completedTokens = 0;
 const taskControl = createTaskSessionControl();
 
 function scrollToBottom(): void {
@@ -80,6 +83,18 @@ function mountMessage(wrapper: HTMLElement): void {
   }
 }
 
+function countTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function updateGlobalTokenCount(extra: number = 0): void {
+  if (tokenCounterEl) {
+    const total = totalTokens + extra;
+    const formatted = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : `${total}`;
+    tokenCounterEl.textContent = `${formatted} tokens`;
+  }
+}
+
 function appendMessage(role: string, text: string): HTMLDivElement {
   const wrapper = document.createElement("div");
   wrapper.className = `message ${role}`;
@@ -87,6 +102,9 @@ function appendMessage(role: string, text: string): HTMLDivElement {
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.textContent = text;
+
+  totalTokens += countTokens(text);
+  updateGlobalTokenCount();
 
   wrapper.appendChild(bubble);
   mountMessage(wrapper);
@@ -195,6 +213,9 @@ function appendError(rawMessage: string): HTMLDivElement {
   bubble.className = "bubble bubble--error";
   bubble.setAttribute("role", "alert");
 
+  totalTokens += countTokens(parsed.message);
+  updateGlobalTokenCount();
+
   const header = document.createElement("div");
   header.className = "error-card-header";
   const mark = document.createElement("span");
@@ -279,6 +300,9 @@ function appendQueuedMessage(text: string): void {
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.textContent = `En cola (${messageQueue.length})...`;
+
+  totalTokens += countTokens(bubble.textContent);
+  updateGlobalTokenCount();
 
   wrapper.appendChild(bubble);
   mountMessage(wrapper);
@@ -601,8 +625,9 @@ function streamResponse(): void {
       onChunk(chunk: string) {
         content += chunk;
         removeTyping(indicator);
-        const { textEl } = ensureBotMessage();
+        const { textEl, bubble } = ensureBotMessage();
         textEl.innerHTML = renderMarkdown(content);
+        updateGlobalTokenCount(countTokens(content) + countTokens(reasoning));
         scrollToBottom();
       },
       onReasoning(chunk: string) {
@@ -643,7 +668,9 @@ function streamResponse(): void {
         }
         if (!wasBrowserStopRequested) {
           chatHistory.push({ role: "assistant", content });
+          totalTokens += countTokens(content) + countTokens(reasoning);
         }
+        updateGlobalTokenCount();
         activeStream = null;
         processQueue();
       },

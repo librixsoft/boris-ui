@@ -73,6 +73,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  position: relative;
 }
 
 .message {
@@ -96,6 +97,7 @@ body {
   line-height: 1.45;
   font-size: 14px;
   word-wrap: break-word;
+  position: relative;
 }
 
 .message.user .bubble {
@@ -708,4 +710,15 @@ body {
 #browser-stop:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.token-counter {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  pointer-events: none;
+  z-index: 10;
 }
