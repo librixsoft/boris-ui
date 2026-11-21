@@ -3,6 +3,8 @@ import { listTools, executeTool, Tool } from "./tools/registry";
 import { execute as executeLogSession } from "./tools/logSession";
 import { buildSystemPrompt } from "./systemPrompt";
 import { evaluateStuck, StuckState } from "./stuckDetection";
+import { executionModeService } from "./executionMode/service";
+import { commandApprovalService } from "./commandApproval/service";
 
 export interface LLMConfig {
   baseUrl: string;
@@ -113,6 +115,53 @@ function sendToRenderer(event: IpcMainInvokeEvent, channel: string, requestId: s
   if (!event.sender.isDestroyed()) {
     event.sender.send(channel, { requestId, ...extra });
   }
+}
+
+async function executeGatedTool(
+  event: IpcMainInvokeEvent,
+  requestId: string,
+  call: ToolCall
+): Promise<{ success: boolean; path?: string; error?: string; status?: string; exitCode?: number; stdout?: string; stderr?: string; durationMs?: number; approvalId?: string }> {
+  if (call.name !== "executeCommand" || executionModeService.isBypass()) {
+    return executeTool(call.name, call.args);
+  }
+
+  const approvalId = crypto.randomUUID();
+
+  sendToRenderer(event, "boris:chat:command-approval-request", requestId, {
+    approvalId,
+    toolCallId: call.id ?? approvalId,
+    toolName: call.name,
+    command: String(call.args.command),
+    cwd: call.args.cwd,
+    timeoutMs: call.args.timeoutMs
+  });
+
+  const decision = await commandApprovalService.request(
+    approvalId,
+    call.id ?? approvalId,
+    requestId,
+    String(call.args.command)
+  );
+
+  if (decision === "denied") {
+    return {
+      success: false,
+      error: "Comando rechazado por el usuario",
+      status: "denied"
+    };
+  }
+
+  if (decision === "timeout") {
+    return {
+      success: false,
+      error: "Aprobación no respondida en tiempo limitado",
+      status: "timeout"
+    };
+  }
+
+  const result = await executeTool(call.name, call.args);
+  return { ...result, approvalId };
 }
 
 type SseLineResult =
@@ -421,14 +470,14 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
             usedBrowser = true;
             browserActions++;
           }
-          sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args });
+          sendToRenderer(event, "boris:chat:tool-call", requestId, { name: call.name, args: call.args, id: call.id });
 
           const toolStart = Date.now();
           let result: { success: boolean; path?: string; error?: string };
           let toolError: Error | null = null;
 
           try {
-            result = await executeTool(call.name, call.args);
+            result = await executeGatedTool(event, requestId, call);
           } catch (execError) {
             toolError = execError instanceof Error ? execError : new Error(String(execError));
             result = { success: false, error: toolError.message };
@@ -537,6 +586,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
         }
 
         if (controller.signal.aborted) {
+          commandApprovalService.abort(requestId);
           await emitTaskEndMarker("aborted");
           sendToRenderer(event, "boris:chat:done", requestId, {});
           return;
@@ -581,6 +631,7 @@ async function streamChatCompletion(event: IpcMainInvokeEvent, payload: ChatPayl
     }
   } catch (error) {
     if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      commandApprovalService.abort(requestId);
       if (usedBrowser && !emittedTaskEnd) {
         await executeLogSession({
           action: "append",
@@ -653,4 +704,4 @@ export function registerLlmIpc(): void {
   ipcMain.handle("boris:chat:abort", abortChatCompletion);
 }
 
-export { LLM_CONFIG, parseSseLine, extractCleanText, extractReasoningFromTags, buildToolsParam };
+export { LLM_CONFIG, parseSseLine, extractCleanText, extractReasoningFromTags, buildToolsParam, executeGatedTool };

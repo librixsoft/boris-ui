@@ -31,8 +31,9 @@ interface ChatHandlers {
   onReasoning: (content: string) => void;
   onDone: () => void;
   onError: (message: string) => void;
-  onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
+  onToolCall?: (data: { name: string; args: Record<string, unknown>; id?: string }) => void;
   onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
+  onApprovalRequest?: (data: { requestId: string; approvalId: string; toolCallId: string; toolName: string; command: string; cwd?: string; timeoutMs?: number }) => void;
 }
 
 declare global {
@@ -48,6 +49,15 @@ declare global {
       };
       shell: {
         openExternal(url: string): void;
+      };
+      executionMode: {
+        get(): Promise<{ mode: "bypass" | "controlled" }>;
+        set(mode: "bypass" | "controlled"): Promise<{ mode: "bypass" | "controlled" }>;
+        toggle(): Promise<{ mode: "bypass" | "controlled" }>;
+        onChanged(handler: (mode: "bypass" | "controlled") => void): void;
+        onApprovalRequest(handler: (data: { requestId: string; approvalId: string; toolCallId: string; toolName: string; command: string; cwd?: string; timeoutMs?: number }) => void): void;
+        approve(approvalId: string): Promise<void>;
+        deny(approvalId: string): Promise<void>;
       };
     };
   }
@@ -71,6 +81,11 @@ let totalTokens = 0;
 let completedTokens = 0;
 const taskControl = createTaskSessionControl();
 
+let currentMode: "bypass" | "controlled" = "controlled";
+let pendingApprovals = 0;
+const executionModeIndicatorEl = document.getElementById("execution-mode-indicator") as HTMLSpanElement | null;
+const executionModeToggleSwitch = document.getElementById("execution-mode-toggle-switch") as HTMLInputElement | null;
+
 function scrollToBottom(): void {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -93,6 +108,65 @@ function updateGlobalTokenCount(extra: number = 0): void {
     const formatted = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : `${total}`;
     tokenCounterEl.textContent = `${formatted} tokens`;
   }
+}
+
+function renderExecutionMode(): void {
+  if (!executionModeIndicatorEl) return;
+  executionModeIndicatorEl.textContent = currentMode === "bypass" ? "Bypass" : "Controlado";
+  executionModeIndicatorEl.className = `execution-mode-value execution-mode-value--${currentMode}`;
+}
+
+function renderExecutionModeToggle(): void {
+  if (!executionModeToggleSwitch) return;
+  executionModeToggleSwitch.checked = currentMode === "bypass";
+}
+
+async function toggleExecutionMode(): Promise<void> {
+  const result = await window.boris.executionMode.toggle();
+  currentMode = result.mode;
+  renderExecutionMode();
+  renderExecutionModeToggle();
+  appendModeChangeNotification();
+}
+
+function bindExecutionModeToggle(): void {
+  if (!executionModeToggleSwitch) return;
+  executionModeToggleSwitch.addEventListener("change", async () => {
+    if (pendingApprovals > 0) return;
+    await toggleExecutionMode();
+  });
+}
+
+async function loadExecutionMode(): Promise<void> {
+  try {
+    const result = await window.boris.executionMode.get();
+    currentMode = result.mode;
+    renderExecutionMode();
+    renderExecutionModeToggle();
+  } catch {
+    currentMode = "controlled";
+    renderExecutionMode();
+    renderExecutionModeToggle();
+  }
+}
+
+window.boris?.executionMode.onChanged((mode: "bypass" | "controlled") => {
+  currentMode = mode;
+  renderExecutionMode();
+  renderExecutionModeToggle();
+});
+
+function appendModeChangeNotification(): void {
+  const wrapper = document.createElement("div");
+  wrapper.className = "message bot mode-notification";
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = `Modo de ejecución cambiado a ${currentMode === "bypass" ? "Bypass" : "Controlado"}`;
+
+  wrapper.appendChild(bubble);
+  mountMessage(wrapper);
+  scrollToBottom();
 }
 
 function appendMessage(role: string, text: string): HTMLDivElement {
@@ -466,6 +540,10 @@ interface PendingToolRow {
   status: HTMLSpanElement;
   rowBody: HTMLDivElement;
   icon: HTMLSpanElement;
+  id?: string;
+  approvalEl?: HTMLDivElement;
+  approved?: boolean;
+  denied?: boolean;
 }
 
 function streamResponse(): void {
@@ -530,7 +608,7 @@ function streamResponse(): void {
     badge.classList.toggle("tools-accordion-badge--running", pendingRows.length > 0);
   }
 
-  function renderToolCall(name: string, args: Record<string, unknown>): void {
+  function renderToolCall(name: string, args: Record<string, unknown>, id?: string): void {
     const acc = ensureToolsAccordion();
     const row = document.createElement("details");
     row.className = "tool-row";
@@ -564,13 +642,15 @@ function streamResponse(): void {
     row.appendChild(summary);
     row.appendChild(rowBody);
     acc.querySelector(".tools-accordion-body")!.appendChild(row);
-    pendingRows.push({ row, summary, status, rowBody, icon });
+    pendingRows.push({ row, summary, status, rowBody, icon, id });
     updateAccordionHeader();
   }
 
   function onToolResult(data: { name: string; result: unknown; success: boolean }): void {
     const pending = pendingRows.shift();
     if (!pending) return;
+    pendingApprovals = Math.max(0, pendingApprovals - 1);
+    renderExecutionModeToggle();
     const output = document.createElement("pre");
     output.className = `tool-output tool-output--${data.success ? "success" : "error"}`;
 
@@ -594,6 +674,74 @@ function streamResponse(): void {
       const body = streamAcc.querySelector(".tools-accordion-body") as HTMLElement;
       body.scrollTop = body.scrollHeight;
     }
+  }
+
+  function showApprovalInRow(pending: PendingToolRow, data: { requestId: string; approvalId: string; toolCallId: string; toolName: string; command: string; cwd?: string; timeoutMs?: number }): void {
+    if (pending.approvalEl) return;
+    const approvalEl = document.createElement("div");
+    approvalEl.className = "command-approval";
+    approvalEl.innerHTML = `
+      <div class="command-approval-command">
+        <code>${escapeHtml(data.command)}</code>
+      </div>
+      <div class="command-approval-actions">
+        <button class="command-approval-approve" type="button">Aprobar</button>
+        <button class="command-approval-deny" type="button">Denegar</button>
+      </div>
+    `;
+    pending.rowBody.appendChild(approvalEl);
+    pending.approvalEl = approvalEl;
+    bindApprovalButtons(data, pending);
+  }
+
+  function bindApprovalButtons(data: { requestId: string; approvalId: string; toolCallId: string; toolName: string; command: string; cwd?: string; timeoutMs?: number }, pending: PendingToolRow): void {
+    const approveBtn = pending.approvalEl?.querySelector(".command-approval-approve") as HTMLButtonElement;
+    const denyBtn = pending.approvalEl?.querySelector(".command-approval-deny") as HTMLButtonElement;
+
+    if (!approveBtn || !denyBtn) return;
+
+    approveBtn.disabled = true;
+    denyBtn.disabled = true;
+
+    approveBtn.addEventListener("click", async () => {
+      if (pending.approved || pending.denied) return;
+
+      pending.approved = true;
+      approveBtn.disabled = true;
+      denyBtn.disabled = true;
+      pending.status.textContent = "Aprobado";
+      pending.status.className = "tool-row-status tool-row-status--success";
+      pending.icon.className = "tool-icon tool-icon--success";
+      pending.icon.textContent = "✓";
+
+      try {
+        await window.boris.executionMode.approve(data.approvalId);
+      } catch {
+        pending.approved = false;
+        approveBtn.disabled = false;
+        denyBtn.disabled = false;
+      }
+    });
+
+    denyBtn.addEventListener("click", async () => {
+      if (pending.approved || pending.denied) return;
+
+      pending.denied = true;
+      approveBtn.disabled = true;
+      denyBtn.disabled = true;
+      pending.status.textContent = "Denegado";
+      pending.status.className = "tool-row-status tool-row-status--error";
+      pending.icon.className = "tool-icon tool-icon--error";
+      pending.icon.textContent = "✗";
+
+      try {
+        await window.boris.executionMode.deny(data.approvalId);
+      } catch {
+        pending.denied = false;
+        approveBtn.disabled = false;
+        denyBtn.disabled = false;
+      }
+    });
   }
 
   if (streamTimer) {
@@ -645,10 +793,17 @@ function streamResponse(): void {
         }
       },
       onToolCall(data) {
-        renderToolCall(data.name, data.args);
+        renderToolCall(data.name, data.args, data.id);
       },
       onToolResult(data) {
         onToolResult(data);
+      },
+      onApprovalRequest(data) {
+        const pending = pendingRows.find((r) => r.id === data.toolCallId);
+        if (!pending) return;
+        pendingApprovals++;
+        renderExecutionModeToggle();
+        showApprovalInRow(pending, data);
       },
     onDone() {
       console.log("[streamResponse] onDone called");
@@ -757,6 +912,11 @@ inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
 });
 
 inputEl.addEventListener("input", autoResize);
+
+if (window.boris) {
+  loadExecutionMode();
+  bindExecutionModeToggle();
+}
 
 messagesEl.addEventListener("click", (e: MouseEvent) => {
   const target = e.target as Element;

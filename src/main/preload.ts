@@ -5,7 +5,7 @@ interface ChatHandlers {
   onReasoning: (content: string) => void;
   onDone: () => void;
   onError: (message: string) => void;
-  onToolCall?: (data: { name: string; args: Record<string, unknown> }) => void;
+  onToolCall?: (data: { name: string; args: Record<string, unknown>; id?: string }) => void;
   onToolResult?: (data: { name: string; result: unknown; success: boolean }) => void;
 }
 
@@ -47,9 +47,9 @@ function attachListeners(requestId: string, handlers: ChatHandlers): AttachListe
     ipcRenderer.off("boris:chat:tool-result", onToolResultInner);
   }
 
-  const onToolCallInner = (_event: IpcRendererEvent, data: { requestId: string; name: string; args: Record<string, unknown> }): void => {
+  const onToolCallInner = (_event: IpcRendererEvent, data: { requestId: string; name: string; args: Record<string, unknown>; id?: string }): void => {
     if (data.requestId === requestId && handlers.onToolCall) {
-      handlers.onToolCall({ name: data.name, args: data.args });
+      handlers.onToolCall({ name: data.name, args: data.args, id: data.id });
     }
   };
 
@@ -87,6 +87,27 @@ interface BorisApi {
   chat: ChatApi;
   tools: ToolsApi;
   shell: ShellApi;
+  executionMode: ExecutionModeApi;
+}
+
+interface ExecutionModeApi {
+  get(): Promise<{ mode: "bypass" | "controlled" }>;
+  set(mode: "bypass" | "controlled"): Promise<{ mode: "bypass" | "controlled" }>;
+  toggle(): Promise<{ mode: "bypass" | "controlled" }>;
+  onChanged(handler: (mode: "bypass" | "controlled") => void): void;
+  onApprovalRequest(handler: (data: CommandApprovalRequest) => void): void;
+  approve(approvalId: string): Promise<void>;
+  deny(approvalId: string): Promise<void>;
+}
+
+interface CommandApprovalRequest {
+  requestId: string;
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  command: string;
+  cwd?: string;
+  timeoutMs?: number;
 }
 
 declare global {
@@ -123,6 +144,33 @@ contextBridge.exposeInMainWorld("boris", {
   shell: {
     openExternal(url: string): void {
       shell.openExternal(url);
+    }
+  },
+  executionMode: {
+    get(): Promise<{ mode: "bypass" | "controlled" }> {
+      return ipcRenderer.invoke("boris:execution-mode:get");
+    },
+    set(mode: "bypass" | "controlled"): Promise<{ mode: "bypass" | "controlled" }> {
+      return ipcRenderer.invoke("boris:execution-mode:set", { mode });
+    },
+    toggle(): Promise<{ mode: "bypass" | "controlled" }> {
+      return ipcRenderer.invoke("boris:execution-mode:toggle");
+    },
+    onChanged(handler: (mode: "bypass" | "controlled") => void): void {
+      ipcRenderer.on("boris:execution-mode:changed", (_event, data) => {
+        handler(data.mode);
+      });
+    },
+    onApprovalRequest(handler: (data: CommandApprovalRequest) => void): void {
+      ipcRenderer.on("boris:chat:command-approval-request", (_event, data) => {
+        handler(data);
+      });
+    },
+    approve(approvalId: string): Promise<void> {
+      return ipcRenderer.invoke("boris:command:approve", { approvalId });
+    },
+    deny(approvalId: string): Promise<void> {
+      return ipcRenderer.invoke("boris:command:deny", { approvalId });
     }
   }
 });

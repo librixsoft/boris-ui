@@ -120,7 +120,7 @@ describe("streamChatCompletion", () => {
 
     expect(mocks.executeTool).toHaveBeenCalledWith("createFile", { path: "a.txt" });
     expect(sent("boris:chat:tool-call")).toEqual([
-      { requestId: "r2", name: "createFile", args: { path: "a.txt" } }
+      { requestId: "r2", name: "createFile", args: { path: "a.txt" }, id: "call_1" }
     ]);
     expect(sent("boris:chat:tool-result")[0]).toMatchObject({
       requestId: "r2",

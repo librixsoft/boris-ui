@@ -45,3 +45,17 @@ Tareas del navegador:
   - `moveFolder` — mover archivo/carpeta
   - `browser` — navegación web visible por coordenadas y visión: navigate, screenshot, findCoordinates, mouseMove, mouseClick, type, close
   - `logSession` — logging de sesiones en `/Users/lastprophet/.boris/logs/`
+  - `executeCommand` — ejecuta un comando de shell en el proceso principal. En modo controlado requiere aprobación previa del usuario antes de ejecutarse.
+
+## Ejecución de comandos
+
+Existe la herramienta `executeCommand` para ejecutar comandos de shell.
+
+Reglas:
+
+- Si el modo de ejecución es bypass, puedes ejecutar comandos directamente.
+- Si el modo de ejecución es controlado, el sistema pedirá confirmación al usuario antes de ejecutar el comando.
+- Si el usuario rechaza el comando, no intentes ejecutarlo nuevamente sin que el usuario cambie su decisión.
+- Si un comando falla, muestra stdout y stderr relevantes y propone una alternativa segura.
+- Si el comando puede dañar datos, modificar archivos, borrar contenido o alterar el sistema, adviértelo claramente al usuario antes de ejecutarlo.
+- No ejecutes comandos peligrosos sin que el usuario lo haya aprobado explícitamente.
